@@ -1209,7 +1209,9 @@ const Main = (() => {
     const cv = () => renderer.domElement;
     document.addEventListener('mousedown', e => {
       if (e.button !== 0) return;
-      if (performance.now() - lastTouch < 400) return;   // the tap was already handled as a touch
+      // only canvas taps are duplicated by the touch stick; the overlay's
+      // resume/start tap must never be swallowed by that guard
+      if (e.target === cv() && performance.now() - lastTouch < 400) return;
       if (G.state === 'pause') {
         G.state = 'play'; $('ov').classList.add('hidden');
         if (cv().requestPointerLock) cv().requestPointerLock();
