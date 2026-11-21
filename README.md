@@ -1,6 +1,6 @@
 # GRIM HALL
 
-A Wolfenstein 3D-style retro FPS. Two levels, 3 guns, 4 enemy types, 100% procedural
+A Wolfenstein 3D-style retro FPS. Eleven levels, 3 guns, 4 enemy types, 100% procedural
 art and audio (no external assets — the only vendored file is the Three.js engine).
 
 ## Run it
@@ -39,6 +39,26 @@ and your gunshots **alarm every enemy within earshot**. All sprites have 4 direc
 
 Death/win screens show score, time, accuracy (hits/shots) and a rank (HALLMASTER / SLAYER / SURVIVOR).
 
+## Look
+- **PBR masonry** — every level's brick, metal, floor and ceiling is generated as an
+  albedo plus a tangent-space normal map built from a height field plus a roughness map,
+  so torch light pools on stone and steel glints instead of washing flat.
+- **Emissive slag** — forge and magma themes draw molten veins into an emissive map, so
+  those halls light themselves.
+- **Volumetric torch shafts** — additive cones driven by the same flicker value as the
+  torch's point light, with embers spiralling down the beam.
+- **Post pass** — bloom (quarter-res bright pass, separable Gaussian blur, composite),
+  vignette, grain, scanlines, chromatic aberration and a per-theme colour grade, all
+  hand-written GLSL.
+- **Enemies** — four procedurally painted figures, four directional views each, a walk
+  stride, an attack-telegraph pose, a muzzle flash, a contact shadow and a collapse on death.
+
+## Debug switches
+`?auto=1` skips the title screen and drops pointer lock, `?tp=x,y,angle` teleports,
+`?mv=fwd` auto-walks, `?fire=1` auto-fires, and the render features can be turned off one
+at a time for an A/B screenshot: `?post=0` (no bloom/composite), `?grade=0` (no theme
+grade), `?nocone` (no torch shafts or embers), `?glow=0` (no emissive slag).
+
 ## Files
 - `index.html` — page shell, HUD, overlays
 - `js/data.js` — map, weapons, enemy stats
@@ -47,7 +67,3 @@ Death/win screens show score, time, accuracy (hits/shots) and a rank (HALLMASTER
 - `js/game.js` — game logic (engine-independent, unit-tested with node)
 - `js/main.js` — Three.js renderer, input, HUD
 - `lib/three.min.js` — Three.js r147 (vendored)
-
-Debug: add `?auto=1` (skip title, no pointer lock), `&tp=x,y,angle` (teleport),
-`&fire=1` (auto-fire), `&mv=fwd` (auto-walk) — e.g.
-`index.html?auto=1&tp=5.5,2.5,0`

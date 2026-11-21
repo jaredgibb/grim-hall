@@ -228,6 +228,18 @@ test('death/win panels are timed by the sim clock, not setTimeout', () => {
   assert.strictEqual(shown.length, 1, 'it must not re-fire');
 });
 
+test('a firing enemy lights a muzzle flash that decays', () => {
+  fresh(0, 31);
+  const e = G.enemies.find(x => !x.def.charge && !x.def.proj);
+  assert.ok(e, 'the level has a hitscan enemy');
+  G.player.x = 5.5; G.player.y = 12.5;
+  e.x = 8.5; e.y = 12.5; e.mode = 'chase'; e.cd = 0; e.mz = 0;
+  Game.update(DT);
+  assert.ok(e.mz > 0, 'the shot should leave a muzzle flash behind');
+  for (let i = 0; i < 12; i++) Game.update(DT);   // 0.2 s
+  assert.ok(e.mz <= 0, 'the flash must fade, not linger');
+});
+
 test('the HUD read-out reflects the sim', () => {
   fresh(0, 10);
   const hud = Game.hud();

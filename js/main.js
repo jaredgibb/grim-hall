@@ -11,7 +11,7 @@ const Main = (() => {
   let renderer, scene, camera, ART;
   let worldGroup = null, doorMeshes = [], enemyObjs = new Map(), itemObjs = new Map(), projObjs = new Map(), fxObjs = new Map();
   let weaponMesh, flashMesh, muzzleLight, muzzlePos, exitMesh, exitLight, flashLight, eFlash;
-  let torches = [], flames = [], cones = [], coneGeo = null;
+  let torches = [], flames = [], cones = [], embers = [], coneGeo = null;
   let msgDiv, lastMini = 0, popDiv, popUntil = 0, lastKills = 0, dmgDiv;
   const Input = { fwd: 0, back: 0, left: 0, right: 0, turn: 0, fire: 0, fireEdge: 0, wantW: -1, sprint: 0 };
   NS.input = Input;      // game.js reads GH.input
@@ -41,6 +41,7 @@ const Main = (() => {
     buildWeapon();
     POST.on = !location.search.includes('post=0');   // ?post=0 is the A/B switch
     buildPost();
+    applyGrade();
     msgDiv = document.createElement('div');
     msgDiv.style.cssText = 'position:fixed;top:18%;width:100%;text-align:center;color:#ffd75e;font-size:22px;font-weight:bold;text-shadow:0 0 10px #a60;z-index:6;pointer-events:none;opacity:0;transition:opacity .2s';
     document.body.appendChild(msgDiv);
@@ -77,6 +78,9 @@ const Main = (() => {
   }
   function buildWorldMeshes() {
     ART = Art.build(G.level);                 // per-level decor, cached by seed
+    // the composite pass grades each level toward its own theme palette;
+    // ?grade=0 turns the grade off for an A/B render
+    applyGrade();
     const MAP = Game.grid(), MAPW = Game.width(), MAPH = Game.height();
     // rebuild-safe: tear the old level down so LEVELS can be swapped at runtime
     if (worldGroup) {
@@ -86,7 +90,7 @@ const Main = (() => {
       });
       scene.remove(worldGroup);
     }
-    doorMeshes = []; torches = []; flames = []; cones = [];
+    doorMeshes = []; torches = []; flames = []; cones = []; embers = [];
     coneGeo = null; // the shared cone geometry was disposed with the old level
     worldGroup = new THREE.Group(); scene.add(worldGroup);
 
@@ -113,9 +117,15 @@ const Main = (() => {
     };
     // PBR surfaces: albedo + normal + roughness, so torch light actually pools
     // on the stone and the metal glints instead of washing flat
+    const glowOn = !location.search.includes('glow=0');   // A/B switch for the slag glow
     const pbrMat = (set, rough, metal) => new THREE.MeshStandardMaterial({
       map: set.map, normalMap: set.normal, roughnessMap: set.rough,
       roughness: rough, metalness: metal,
+      // slag-veined themes (forge, magma) carry an emissive map, so the walls
+      // glow in the dark instead of depending on a torch being nearby
+      emissive: set.emi && glowOn ? 0xff6a22 : 0x000000,
+      emissiveMap: set.emi && glowOn ? set.emi : null,
+      emissiveIntensity: set.emi && glowOn ? 1.15 : 0,
     });
     addInstanced(brickCells, pbrMat(ART.tex.brick, 0.92, 0.05));
     addInstanced(metalCells, pbrMat(ART.tex.metal, 0.45, 0.75));
@@ -137,7 +147,7 @@ const Main = (() => {
       }
     }
     // floor + ceiling: the three maps of a PBR set must tile together
-    const tile = (set, n, m) => { set.map.repeat.set(n, m); set.normal.repeat.set(n, m); set.rough.repeat.set(n, m); };
+    const tile = (set, n, m) => { set.map.repeat.set(n, m); set.normal.repeat.set(n, m); set.rough.repeat.set(n, m); if (set.emi) set.emi.repeat.set(n, m); };
     const fl = new THREE.Mesh(new THREE.PlaneGeometry(MAPW, MAPH), pbrMat(ART.tex.floor, 0.85, 0.08));
     tile(ART.tex.floor, MAPW, MAPH);
     fl.rotation.x = -Math.PI / 2; fl.position.set(MAPW / 2, 0, MAPH / 2); worldGroup.add(fl);
@@ -166,12 +176,24 @@ const Main = (() => {
       worldGroup.add(f2);
       flames.push(f2);
       // volumetric shaft hanging from the flame: apex at the torch, base just
-      // above the floor. ?nocone turns the shafts off for an A/B render.
+      // above the floor. ?nocone turns the shafts and their embers off for an
+      // A/B render.
       if (!location.search.includes('nocone')) {
         const c2 = mkCone(l.userData.ph);
         c2.position.set(tx + 0.5, WALL_H - 0.25 - 0.8, ty + 0.5);
         worldGroup.add(c2);
         cones.push(c2);
+        // embers drifting down the shaft
+        for (let k = 0; k < 3; k++) {
+          const e = new THREE.Sprite(new THREE.SpriteMaterial({
+            map: ART.ember[k % 2], transparent: true,
+            blending: THREE.AdditiveBlending, depthWrite: false }));
+          e.scale.set(0.07, 0.07, 1);
+          e.position.set(tx + 0.5, WALL_H - 0.42, ty + 0.5);
+          e.userData = { cx: tx + 0.5, cz: ty + 0.5, ph: Math.random() * 9, sp: 0.3 + Math.random() * 0.35 };
+          worldGroup.add(e);
+          embers.push(e);
+        }
       }
     }
     // wall decorations on wall faces that border floor
@@ -239,7 +261,7 @@ const Main = (() => {
     on: true,
     bloom: 0.85, threshold: 0.42, knee: 0.30,
     vignette: 0.38, grain: 0.04, scan: 0.04, aberr: 1.6,
-    blurIter: 3, blurRadius: 2.2,
+    blurIter: 3, blurRadius: 2.2, contrast: 0.30,
   };
   const QUAD_VS = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }';
   let rtFull, rtA, rtB, postScene, postCam, postQuad, brightMat, blurMat, compMat;
@@ -294,11 +316,13 @@ const Main = (() => {
         strength: { value: POST.bloom }, vignette: { value: POST.vignette },
         grain: { value: POST.grain }, scan: { value: POST.scan },
         aberr: { value: POST.aberr }, phase: { value: 0 },
+        grade: { value: new THREE.Vector3(1, 1, 1) }, contrast: { value: POST.contrast },
       },
       vertexShader: QUAD_VS,
       fragmentShader: `
         uniform sampler2D base; uniform sampler2D bloom;
-        uniform float strength, vignette, grain, scan, aberr, phase;
+        uniform float strength, vignette, grain, scan, aberr, phase, contrast;
+        uniform vec3 grade;
         varying vec2 vUv;
         float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
         void main() {
@@ -310,12 +334,20 @@ const Main = (() => {
           vec3 c = vec3(texture2D(base, uv + off).r, texture2D(base, uv).g, texture2D(base, uv - off).b);
           c += texture2D(bloom, uv).rgb * strength;
           c *= clamp(1.0 - vignette * r2 * 1.7, 0.25, 1.0);
+          c *= grade;                                    // theme colour grade
+          c = mix(c, c * c * (3.0 - 2.0 * c), contrast); // S-curve contrast lift
           c += (hash(floor(uv * vec2(480.0, 300.0)) + phase) - 0.5) * grain;
           c *= 1.0 - scan * (0.5 + 0.5 * sin(uv.y * 471.24));
           gl_FragColor = linearToOutputTexel(vec4(max(c, 0.0), 1.0));
         }`,
       depthTest: false, depthWrite: false,
     });
+  }
+  function applyGrade() {
+    if (!compMat) return;
+    if (location.search.includes('grade=0')) { compMat.uniforms.grade.value.set(1, 1, 1); return; }
+    const gr = Art.grade(LEVELS[G.level].theme);
+    compMat.uniforms.grade.value.set(gr[0], gr[1], gr[2]);
   }
   function renderFrame(t) {
     if (!POST.on || !rtFull) { renderer.render(scene, camera); return; }
@@ -402,6 +434,15 @@ const Main = (() => {
       const fl = 0.7 + Math.sin(t * 11 + l.userData.ph) * 0.12 + Math.random() * 0.08;
       l.intensity = fl;
       if (cones[i]) cones[i].material.uniforms.flicker.value = fl;
+    }
+    // embers spiral down the shaft and fade out before they reach the floor
+    for (const e of embers) {
+      const u = e.userData;
+      const s = (t * u.sp + u.ph) % 1;
+      const r = 0.2 * (1 - s * 0.55);
+      e.position.set(u.cx + Math.cos(u.ph + t * 1.9) * r, WALL_H - 0.42 - s * 1.3, u.cz + Math.sin(u.ph + t * 1.9) * r);
+      e.material.opacity = (1 - s) * 0.8;
+      e.scale.set(0.07 * (1 - s * 0.4), 0.07 * (1 - s * 0.4), 1);
     }
     for (const f of flames) {
       f.material.map = ART.flame[Math.floor(t * 12 + f.userData.ph) % 3];
@@ -492,9 +533,15 @@ const Main = (() => {
         const s = mkSprite(ART.spr[e.t].f[0].walk, e.def.h * asp, e.def.h);
         s.position.y = e.def.h / 2;
         grp.add(s);
+        // muzzle flash rides on the figure so a shot has a visible origin
+        const muzzle = new THREE.Sprite(new THREE.SpriteMaterial({
+          map: ART.ember[0], transparent: true, blending: THREE.AdditiveBlending,
+          depthWrite: false, opacity: 0 }));
+        muzzle.scale.set(0.2, 0.2, 1);
+        grp.add(muzzle);
         grp.position.set(e.x, 0, e.y);
         scene.add(grp);
-        o = { grp, spr: s, shadow: mkShadow(e.def.h * asp * 1.25, e.def.h * 0.6) };
+        o = { grp, spr: s, muzzle, shadow: mkShadow(e.def.h * asp * 1.25, e.def.h * 0.6) };
         scene.add(o.shadow);
         enemyObjs.set(e, o);
       }
@@ -510,6 +557,12 @@ const Main = (() => {
       o.spr.material.map = e.flash > 0 ? set.flash : set.walk;
       o.spr.material.color.setScalar(spriteLight(e.x, e.y));
       o.spr.scale.set(e.def.h * asp, e.def.h, 1);
+      // the flash blooms for a beat after the shot, aimed at the player
+      const mk = e.dead ? 0 : Math.max(0, e.mz || 0) / 0.16;
+      o.muzzle.material.opacity = mk * 0.85;
+      const ms = 0.14 + mk * 0.16;
+      o.muzzle.scale.set(ms, ms, 1);
+      o.muzzle.position.set(Math.cos(e.a) * 0.34, e.def.h * 0.52, Math.sin(e.a) * 0.34);
       if (e.dead) {
         const k = 1 - Math.max(0, e.deadT) / 0.6; // 0..1
         o.grp.rotation.x = -k * Math.PI / 2 * 0.92;

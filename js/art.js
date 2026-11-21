@@ -67,17 +67,29 @@
   const THEMES = {
     hall:  { brick: [74, 38, 32], mortar: [34, 22, 18], metal: [61, 71, 84], accent: '#8a5a3a' },
     crypt: { brick: [52, 54, 60], mortar: [22, 24, 28], metal: [48, 52, 60], accent: '#4a5568' },
-    forge: { brick: [66, 44, 30], mortar: [26, 20, 16], metal: [78, 60, 42], accent: '#b06a2a' },
+    forge: { brick: [66, 44, 30], mortar: [26, 20, 16], metal: [78, 60, 42], accent: '#b06a2a',
+             glow: '#c9531f' },
     vault: { brick: [44, 52, 62], mortar: [18, 22, 26], metal: [40, 46, 54], accent: '#2f6b7a' },
     // cistern: damp salt-green stone; bone: pale ash-lime masonry
     cistern: { brick: [46, 62, 66], mortar: [20, 28, 30], metal: [56, 72, 78], accent: '#3f7a86',
                drip: 'rgba(214,226,218,0.20)' },
     bone:    { brick: [86, 82, 72], mortar: [38, 34, 28], metal: [96, 92, 80], accent: '#c8b78a',
                drip: 'rgba(232,222,200,0.16)' },
+    // frost: icy slate with verdigris on the iron; ash: soot-grey cinder block
+    frost:   { brick: [58, 66, 78], mortar: [24, 30, 36], metal: [70, 86, 98], accent: '#6fa8c4',
+               drip: 'rgba(196,222,236,0.18)' },
+    ash:     { brick: [64, 60, 58], mortar: [26, 24, 22], metal: [72, 68, 64], accent: '#8f8477',
+               drip: 'rgba(190,180,170,0.14)' },
+    // magma: basalt streaked with molten iron; spire: cold green-black slate
+    magma:   { brick: [56, 36, 32], mortar: [20, 14, 12], metal: [92, 62, 44], accent: '#e2713a',
+               drip: 'rgba(240,120,50,0.22)', glow: '#ff8a3a' },
+    spire:   { brick: [44, 52, 48], mortar: [18, 22, 22], metal: [60, 70, 66], accent: '#3f8a72',
+               drip: 'rgba(150,200,180,0.16)' },
   };
   function mkSet() {
-    const a = mkc(TS, TS), h = mkc(TS, TS), r = mkc(TS, TS);
-    return { a, g: a.getContext('2d'), h, hg: h.getContext('2d'), r, rg: r.getContext('2d') };
+    const a = mkc(TS, TS), h = mkc(TS, TS), r = mkc(TS, TS), e = mkc(TS, TS);
+    return { a, g: a.getContext('2d'), h, hg: h.getContext('2d'), r, rg: r.getContext('2d'),
+             e, eg: e.getContext('2d') };
   }
   // tangent-space normal map from a grayscale height field; sampled with wrap so
   // the map tiles seamlessly across the instanced wall blocks
@@ -107,12 +119,14 @@
       map: tex(set.a, rep, key + '#a'),
       normal: tex(normalMap(set.h, 2.6), rep, key + '#n'),
       rough: tex(set.r, rep, key + '#r'),
+      emi: set.glow ? tex(set.e, rep, key + '#e') : null,
     };
   }
 
   function brick(theme) {
     const s = mkSet(), g = s.g, hg = s.hg, rg = s.rg;
     const pal = THEMES[theme] || THEMES.hall;
+    s.glow = !!pal.glow;
     const bh = 16, bw = 32;
     g.fillStyle = 'rgb(' + pal.mortar.join(',') + ')'; g.fillRect(0, 0, TS, TS);
     hg.fillStyle = '#202020'; hg.fillRect(0, 0, TS, TS);   // mortar sits low
@@ -144,6 +158,21 @@
       g.moveTo(x, y);
       for (let s2 = 0; s2 < 6; s2++) { x += rnd() * 10 - 5; y += 8 + rnd() * 8; g.lineTo(x, y); }
       g.stroke();
+    }
+    // Molten themes: cracks in the masonry carry glowing slag. The emissive map
+    // is the same vein drawn in white, so the wall self-lights instead of relying
+    // on a nearby torch.
+    if (pal.glow) {
+      for (let i = 0; i < 7; i++) {
+        let x = rnd() * TS | 0, y = rnd() * 40 | 0;
+        const pts = [[x, y]];
+        for (let k = 0; k < 7; k++) { x += rnd() * 14 - 7; y += 8 + rnd() * 12; pts.push([x, y]); }
+        const trace = c => { c.beginPath(); c.moveTo(pts[0][0], pts[0][1]); for (const p of pts) c.lineTo(p[0], p[1]); };
+        trace(g); g.strokeStyle = 'rgba(255,150,60,0.55)'; g.lineWidth = 7; g.stroke();
+        g.strokeStyle = pal.glow; g.lineWidth = 3; g.stroke();
+        trace(s.eg); s.eg.strokeStyle = 'rgba(255,255,255,0.9)'; s.eg.lineWidth = 3; s.eg.stroke();
+        trace(rg); rg.strokeStyle = 'rgba(60,60,60,0.8)'; rg.lineWidth = 3; rg.stroke();   // slag is smooth
+      }
     }
     return s;
   }
@@ -469,6 +498,19 @@
       g.beginPath(); g.moveTo(16 - w / 2, 46); g.quadraticCurveTo(16 - w, 46 - h * 0.6, 16 + (i - 1) * 2, 46 - h); g.quadraticCurveTo(16 + w, 46 - h * 0.6, 16 + w / 2, 46); g.fill();
       g.fillStyle = '#ffe98a';
       g.beginPath(); g.moveTo(16 - w / 4, 46); g.quadraticCurveTo(16 - w / 2, 46 - h * 0.4, 16, 46 - h * 0.65); g.quadraticCurveTo(16 + w / 2, 46 - h * 0.4, 16 + w / 4, 46); g.fill();
+      return c;
+    });
+  }
+  // ---- embers: soft motes that drift down a torch shaft ----
+  function emberFrames() {
+    return [0, 1].map(i => {
+      const c = mkc(16, 16), g = c.getContext('2d');
+      const r = 5 + i;
+      const grd = g.createRadialGradient(8, 8, 0, 8, 8, r);
+      grd.addColorStop(0, 'rgba(255,196,96,0.95)');
+      grd.addColorStop(0.45, 'rgba(226,104,26,0.40)');
+      grd.addColorStop(1, 'rgba(120,40,10,0)');
+      g.fillStyle = grd; g.beginPath(); g.arc(8, 8, r, 0, TAU); g.fill();
       return c;
     });
   }
@@ -1058,6 +1100,7 @@
         bloom: FLASHR[k],           // flash radius in viewmodel pixels
       })),
       flame: flameFrames().map((c, i) => tex(c, false, 'fl' + i)),
+      ember: emberFrames().map((c, i) => tex(c, false, 'em' + i)),
       flash: tex(muzzleFlash(), false, 'flash'),
       face: faceFrames().map((c, i) => tex(c, false, 'face' + i)),
       boom: boomFrames().map((c, i) => tex(c, false, 'boom' + i)),
@@ -1071,8 +1114,16 @@
     return A;
   }
 
+  // per-theme post grade: a tint pulled from the theme accent, so the composite
+  // pass pushes each level toward its own palette instead of a flat grey
+  function grade(theme) {
+    const hex = (THEMES[theme] || THEMES.hall).accent.slice(1);
+    const ch = i => parseInt(hex.substr(i, 2), 16) / 255;
+    return [1 + (ch(0) - 0.5) * 0.24, 1 + (ch(2) - 0.5) * 0.24, 1 + (ch(4) - 0.5) * 0.24];
+  }
+
   const Art = {
-    mkc, px, tex, mat, noise, build, setSeed,
+    mkc, px, tex, mat, noise, build, setSeed, grade,
     figure: enemyFigure, enemyPal: ENEMY_PAL, enemySpr: ENEMY_SPR,
     // handy for tests / debugging: how many GPU uploads the pools hold
     poolSize: () => ({ textures: TEX.size, materials: MAT.size, builds: BUILD.size }),

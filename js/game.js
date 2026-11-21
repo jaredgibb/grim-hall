@@ -162,7 +162,7 @@
         else if (ENEMY[c]) {
           const d = ENEMY[c];
           G.enemies.push({ t: c, def: d, x: x + 0.5, y: y + 0.5, hp: d.hp, a: rng() * TAU,
-            cd: 1 + rng(), flash: 0, dead: false, deadT: 0, wa: rng() * TAU, wt: 0, anim: rng() * 9,
+            cd: 1 + rng(), flash: 0, mz: 0, dead: false, deadT: 0, wa: rng() * TAU, wt: 0, anim: rng() * 9,
             mode: 'wander', lx: 0, ly: 0, flinch: 0, strafe: 1, stT: 0, tele: 0, charging: 0, moving: false });
         } else if ('12abhkH'.includes(c)) {
           const key = { '1': 'i1', '2': 'i2', 'a': 'ia', 'b': 'ib', 'h': 'ih', 'H': 'iH', 'k': 'ik' }[c];
@@ -344,7 +344,7 @@
 
   function tickEnemy(e, dt) {
     if (e.dead) { e.deadT -= dt; return; }
-    e.cd -= dt; e.flash -= dt;
+    e.cd -= dt; e.flash -= dt; if (e.mz > 0) e.mz -= dt;
     if (e.flinch > 0) { e.flinch -= dt; return; }          // staggered by a bullet hit
     const p = G.player;
     const dx = p.x - e.x, dy = p.y - e.y, d = Math.hypot(dx, dy) || 0.001;
@@ -405,7 +405,7 @@
       } else if (d < TUNE.meleeRange) {
         e.cd = TUNE.meleeCd; damagePlayer(e.def.melee, e.x, e.y);
       } else if (e.def.proj) {
-        e.cd = e.def.rate;
+        e.cd = e.def.rate; e.mz = 0.16;
         const n = e.t === 'r' ? 3 : 1;
         for (let i = 0; i < n; i++) {
           const an = e.a + (i - (n - 1) / 2) * 0.22 + (rng() - 0.5) * 0.08;
@@ -414,7 +414,7 @@
         }
         AUDIO.enemyShot(d);
       } else {
-        e.cd = e.def.rate;
+        e.cd = e.def.rate; e.mz = 0.16;
         const chance = Math.max(TUNE.hitChanceMin, TUNE.hitChanceBase - d * TUNE.hitChancePerDist);
         if (rng() < chance) {
           damagePlayer(e.def.dmg, e.x, e.y);
