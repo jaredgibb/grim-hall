@@ -17,6 +17,7 @@ const Main = (() => {
   NS.input = Input;      // game.js reads GH.input
   window.Input = Input;  // handy for debugging from the console
   const keys = {};
+  const WOUND_ON = !location.search.includes('nowound');   // A/B switch for wounded sprites
 
   function init() {
     renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
@@ -571,7 +572,9 @@ const Main = (() => {
       while (rel > Math.PI) rel -= TAU; while (rel < -Math.PI) rel += TAU;
       const view = Math.abs(rel) < Math.PI / 4 ? 'f' : Math.abs(rel) > 3 * Math.PI / 4 ? 'b' : (rel > 0 ? 'r' : 'l');
       const set = (e.tele > 0 || e.charging > 0) ? ART.spr[e.t][view].atk : ART.spr[e.t][view][fr];
-      o.spr.material.map = e.flash > 0 ? set.flash : set.walk;
+      // a figure that has taken real damage shows its wounds until the hit flash
+      // washes the whole sprite white for a frame
+      o.spr.material.map = e.flash > 0 ? set.flash : (WOUND_ON && Game.wounded(e) ? set.hurt : set.walk);
       o.spr.material.color.setScalar(spriteLight(e.x, e.y));
       o.spr.scale.set(e.def.h * asp, e.def.h, 1);
       // the flash blooms for a beat after the shot, aimed at the player

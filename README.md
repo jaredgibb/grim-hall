@@ -29,6 +29,9 @@ engine-independent and runs headless with a seeded RNG, so runs are reproducible
 ## Enemies
 Enemies **hunt you with a flow-field pathfinder** (they path around corners and open doors),
 and your gunshots **alarm every enemy within earshot**. All sprites have 4 directional views.
+A figure that has lost more than 45% of its health is **wounded**: it limps (everything it
+does is 22% slower) and its sprite gains blood and a greyed, haggard cast, so you can read
+how close a brute is to dying before you finish it.
 
 | Type | HP | Attack |
 |------|----|--------|
@@ -54,7 +57,9 @@ Death/win screens show score, time, accuracy (hits/shots) and a rank (HALLMASTER
   hand-written GLSL.
 - **Enemies** — four procedurally painted figures, four directional views each, a walk
   stride, an attack-telegraph pose, a muzzle flash, a contact shadow and a collapse on
-  death that leaves a sprawled **corpse** (with a blood pool) on the floor.
+  death that leaves a sprawled **corpse** (with a blood pool) on the floor. Each figure
+  also has a **wounded** sprite — blood streaks, dark wounds, a drained colour — that
+  replaces the clean one once it has taken real damage.
 - **Impact decals** — a bullet that misses leaves a crater on the exact wall face it
   struck, oriented by that face's normal.
 
@@ -63,7 +68,7 @@ Death/win screens show score, time, accuracy (hits/shots) and a rank (HALLMASTER
 `?mv=fwd` auto-walks, `?fire=1` auto-fires, and the render features can be turned off one
 at a time for an A/B screenshot: `?post=0` (no bloom/composite), `?grade=0` (no theme
 grade), `?nocone` (no torch shafts or embers), `?glow=0` (no emissive slag), `?noplink`
-(plank walls rendered as brick).
+(plank walls rendered as brick), `?nowound` (wounded figures use their clean sprites).
 
 ## Files
 - `index.html` — page shell, HUD, overlays

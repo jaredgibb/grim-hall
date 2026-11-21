@@ -38,6 +38,8 @@ const GH = {
     doorPassFrac: 0.5,         // a door counts as solid below this open fraction
     doorSlideFrac: 0.92,       // how far the door mesh travels up
     flinchTime: 0.3,           // stagger after a non-lethal hit
+    woundFrac: 0.55,           // below this share of max hp a figure is wounded
+    woundSlow: 0.78,           // and limps: everything it does is this slow
     chargeTelegraph: 0.45,     // brute wind-up before the lunge
     chargeTime: 0.5, chargeSpeed: 7.5,
     chargeRangeMin: 2.2, chargeRangeMax: 9,

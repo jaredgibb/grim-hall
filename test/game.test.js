@@ -299,6 +299,25 @@ test('plank walls are as solid as brick', () => {
   assert.ok(Game.castRay(x - 0.5, y + 0.5, 1, 0) < 1.5, 'rays stop on the plank face');
 });
 
+test('a wounded enemy limps, a healthy one does not', () => {
+  const run = hp => {
+    fresh(0, 41);
+    const e = G.enemies[0];
+    G.enemies.length = 1;
+    e.x = 5.5; e.y = 12.5; e.hp = hp; e.mode = 'wander'; e.wt = 99; e.wa = 0;
+    e.moving = true; e.flinch = 0;
+    const x0 = e.x, y0 = e.y;
+    sim(60, {});
+    return Math.hypot(e.x - x0, e.y - y0);
+  };
+  const max = GH.enemy.g.hp;
+  assert.ok(!Game.wounded({ hp: max, def: GH.enemy.g }), 'at full health the figure is not wounded');
+  assert.ok(Game.wounded({ hp: max * 0.3, def: GH.enemy.g }), 'below the wound fraction it is');
+  const healthy = run(max), hurt = run(max * 0.3);
+  assert.ok(healthy > 0.1, 'the healthy enemy actually walked');
+  assert.ok(hurt < healthy * 0.9, `wounded walked ${hurt.toFixed(3)} vs healthy ${healthy.toFixed(3)}`);
+});
+
 test('the HUD read-out reflects the sim', () => {
   fresh(0, 10);
   const hud = Game.hud();

@@ -513,10 +513,12 @@
     for (const view of ['f', 'b', 'l', 'r']) {
       out[view] = [0, 1].map(fr => {
         const c = enemyFigure(W, H, view, fr, pal, 0);
-        return { walk: tex(c, false, key + view + fr), flash: tex(flashify(c), false, key + view + fr + 'f') };
+        return { walk: tex(c, false, key + view + fr), flash: tex(flashify(c), false, key + view + fr + 'f'),
+          hurt: tex(woundify(c), false, key + view + fr + 'w') };
       });
       const a = enemyFigure(W, H, view, 0, pal, 1);
-      out[view].atk = { walk: tex(a, false, key + view + 'a'), flash: tex(flashify(a), false, key + view + 'af') };
+      out[view].atk = { walk: tex(a, false, key + view + 'a'), flash: tex(flashify(a), false, key + view + 'af'),
+        hurt: tex(woundify(a), false, key + view + 'aw') };
     }
     return out;
   }
@@ -525,6 +527,28 @@
     g.drawImage(c, 0, 0);
     g.globalCompositeOperation = 'source-atop';
     g.fillStyle = 'rgba(255,240,220,0.92)'; g.fillRect(0, 0, c.width, c.height);
+    return f;
+  }
+  // The wounded variant of a figure: a drained, greyed cast with blood work
+  // painted only where the body is opaque, so nothing floats off the silhouette.
+  function woundify(c) {
+    const f = mkc(c.width, c.height), g = f.getContext('2d');
+    g.drawImage(c, 0, 0);
+    g.globalCompositeOperation = 'source-atop';
+    g.fillStyle = 'rgba(92,74,66,0.20)'; g.fillRect(0, 0, c.width, c.height);
+    for (let i = 0; i < 6; i++) {
+      const x = c.width * (0.24 + rnd() * 0.5), y = c.height * (0.18 + rnd() * 0.55);
+      const r = 2.5 + rnd() * 5;
+      const gr = g.createRadialGradient(x, y, 0, x, y, r);
+      gr.addColorStop(0, 'rgba(128,14,10,0.95)');
+      gr.addColorStop(0.55, 'rgba(92,10,8,0.65)');
+      gr.addColorStop(1, 'rgba(60,6,5,0)');
+      g.fillStyle = gr;
+      g.beginPath(); g.arc(x, y, r, 0, TAU); g.fill();
+      g.fillStyle = 'rgba(104,12,9,0.5)';
+      g.fillRect(x - 1, y, 2, 5 + rnd() * 14);
+    }
+    g.globalCompositeOperation = 'source-over';
     return f;
   }
   // ---- item sprites (64x64) ----

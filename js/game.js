@@ -50,6 +50,9 @@
   const IN = () => NS.input || EMPTY_INPUT;
   const idx = (cx, cy) => cy * W + cx;
   const isWallCh = c => c === '#' || c === 'T' || c === '~';
+  // Both the sim and the renderer read this: below woundFrac of its health a
+  // figure limps and is painted with blood work.
+  const wounded = e => e.hp < e.def.hp * TUNE.woundFrac;
 
   function cell(x, y) {
     const cx = Math.floor(x), cy = Math.floor(y);
@@ -360,6 +363,7 @@
     if (e.flinch > 0) { e.flinch -= dt; return; }          // staggered by a bullet hit
     const p = G.player;
     const dx = p.x - e.x, dy = p.y - e.y, d = Math.hypot(dx, dy) || 0.001;
+    const limp = wounded(e) ? TUNE.woundSlow : 1;
     const sees = d < e.def.range && hasLOS(e.x, e.y, p.x, p.y);
     if (sees) { e.mode = 'chase'; e.lx = p.x; e.ly = p.y; }
     if (e.mode === 'chase' && !sees && d > 0.5) {
@@ -369,7 +373,7 @@
       if (f) { mx = f.tx + 0.5 - e.x; my = f.ty + 0.5 - e.y; }
       const ld = Math.hypot(mx, my);
       if (ld > 0.3) {
-        if (moveEnt(e, mx / ld * e.def.spd * dt * 0.9, my / ld * e.def.spd * dt * 0.9, e.def.r * 0.9)) e.anim += dt * 6;
+        if (moveEnt(e, mx / ld * e.def.spd * dt * 0.9 * limp, my / ld * e.def.spd * dt * 0.9 * limp, e.def.r * 0.9)) e.anim += dt * 6 * limp;
         e.moving = true;
         return;
       }
@@ -378,8 +382,8 @@
     if (e.mode === 'wander') {
       e.wt -= dt;
       if (e.wt <= 0) { e.wt = 1 + rng() * 2.5; e.wa = rng() * TAU; e.moving = rng() < 0.6; }
-      if (e.moving && moveEnt(e, Math.cos(e.wa) * e.def.spd * 0.4 * dt, Math.sin(e.wa) * e.def.spd * 0.4 * dt, e.def.r * 0.9))
-        e.anim += dt * 4;
+      if (e.moving && moveEnt(e, Math.cos(e.wa) * e.def.spd * 0.4 * limp * dt, Math.sin(e.wa) * e.def.spd * 0.4 * limp * dt, e.def.r * 0.9))
+        e.anim += dt * 4 * limp;
       return;
     }
     e.a = Math.atan2(dy, dx);
@@ -390,7 +394,7 @@
     }
     if (e.charging > 0) {                                   // charged lunge
       e.charging -= dt;
-      if (moveEnt(e, dx / d * TUNE.chargeSpeed * dt, dy / d * TUNE.chargeSpeed * dt, e.def.r * 0.9)) e.anim += dt * 10;
+      if (moveEnt(e, dx / d * TUNE.chargeSpeed * limp * dt, dy / d * TUNE.chargeSpeed * limp * dt, e.def.r * 0.9)) e.anim += dt * 10 * limp;
       e.moving = true;
       if (d < TUNE.meleeRange) { damagePlayer(Math.round(e.def.melee * 1.5), e.x, e.y); e.charging = 0; e.cd = e.def.rate; }
       return;
@@ -405,9 +409,9 @@
         const mx2 = ux * keep * 0.7 - uy * e.strafe * 0.8;
         const my2 = uy * keep * 0.7 + ux * e.strafe * 0.8;
         const l2 = Math.hypot(mx2, my2) || 1;
-        if (moveEnt(e, mx2 / l2 * e.def.spd * dt, my2 / l2 * e.def.spd * dt, e.def.r * 0.9)) e.anim += dt * 7;
+        if (moveEnt(e, mx2 / l2 * e.def.spd * limp * dt, my2 / l2 * e.def.spd * limp * dt, e.def.r * 0.9)) e.anim += dt * 7 * limp;
         e.moving = true;
-      } else if (moveEnt(e, dx / d * e.def.spd * dt, dy / d * e.def.spd * dt, e.def.r * 0.9)) { e.anim += dt * 6; e.moving = true; }
+      } else if (moveEnt(e, dx / d * e.def.spd * limp * dt, dy / d * e.def.spd * limp * dt, e.def.r * 0.9)) { e.anim += dt * 6 * limp; e.moving = true; }
       else e.moving = false;
     } else e.moving = false;
     if (e.cd <= 0 && sees) {
@@ -560,7 +564,7 @@
     tune: () => TUNE,
     buildWorld, update, tryFire, damagePlayer, killEnemy, explode, computeFlow,
     castRay, rayHit, hasLOS, isBlocked, cell, cellSolid, doorAt, torchCells, setDoorOpen,
-    moveEnt, collidePlayer, separateEnemies, makeRng,
+    moveEnt, collidePlayer, separateEnemies, makeRng, wounded,
     width: () => W, height: () => H, grid: () => grid,
     levelCount: () => NS.levels.length,
     nextLevel: () => { buildWorld((G.level + 1) % NS.levels.length); return G.level; },
