@@ -54,8 +54,9 @@ Death/win screens show score, time, accuracy (hits/shots) and a rank (HALLMASTER
   torch's point light, with embers spiralling down the beam.
 - **Shallow water** — `w` cells in the maps are a rippling shader surface: wave-normal
   ripples, fresnel, a specular glint from every torch, foam along the shoreline and a
-  wake that follows whatever is wading. Wading is 38% slower and every step in throws a
-  splash ring on the floor.
+  wake that follows whatever is wading. Wading is 38% slower, every step in throws a
+  splash ring on the floor, the camera drops knee-deep, and an enemy standing in the
+  shallows sinks to the waterline with a cool, soaked cast.
 - **Post pass** — bloom (quarter-res bright pass, separable Gaussian blur, composite),
   vignette, grain, scanlines, chromatic aberration and a per-theme colour grade, all
   hand-written GLSL.

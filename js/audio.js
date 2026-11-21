@@ -57,6 +57,8 @@
     door() { tone(90, 0.3, 'sawtooth', 0.12, 140); noiseBurst(0.2, 0.1, 300); },
     enemyShot(d) { const v = Math.max(0.2, 1 - (d || 0) / 18); tone(500, 0.08, 'square', 0.12 * v, 200); },
     step() { noiseBurst(0.05, 0.08, 300 + Math.random() * 200); },
+    wade() { noiseBurst(0.12, 0.1, 700 + Math.random() * 300); tone(180, 0.1, 'sine', 0.07, 90); },
+    splash() { noiseBurst(0.22, 0.3, 1200); tone(420, 0.18, 'sine', 0.12, 120); },
     unlock() { tone(440, 0.1, 'square', 0.2); tone(660, 0.1, 'square', 0.2, null, 0.1); tone(880, 0.25, 'square', 0.22, null, 0.2); },
     win() { [523, 659, 784, 1046].forEach((f, i) => tone(f, 0.22, 'square', 0.2, null, i * 0.16)); },
 

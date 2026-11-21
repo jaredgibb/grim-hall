@@ -393,11 +393,12 @@ const Main = (() => {
   let deadT = 0;
   function syncCamera(dt, t) {
     const p = G.player;
-    const bobY = p.moving ? Math.sin(p.bob) * 0.035 : 0;
+    const wade = Game.inWater(p.x, p.y) ? 0.26 : 0;   // standing in the shallows puts you knee-deep
+    const bobY = p.moving ? Math.sin(p.bob) * (wade ? 0.02 : 0.035) : 0;
     const bobX = p.moving ? Math.cos(p.bob * 0.5) * 0.02 : 0;
     const shk = G.shake * 0.02;
     if (G.state === 'dead') deadT += dt; else deadT = 0;
-    const eyeY = Math.max(0.12, EYE + bobY - deadT * 0.75);
+    const eyeY = Math.max(0.12, EYE + bobY - wade - deadT * 0.75);
     camera.position.set(
       p.x + (Math.random() - 0.5) * shk,
       eyeY + (Math.random() - 0.5) * shk,
@@ -701,7 +702,9 @@ const Main = (() => {
         scene.add(o.shadow);
         enemyObjs.set(e, o);
       }
-      o.grp.position.set(e.x, 0, e.y);
+      const wet = Game.inWater(e.x, e.y);
+      const sink = wet ? 0.22 : 0;
+      o.grp.position.set(e.x, -sink, e.y);
       o.shadow.position.set(e.x, 0.02, e.y);
       const fr = e.moving ? (Math.floor(e.anim) % 2) : 0;
       // pick 4-way view by angle from enemy facing to camera
@@ -713,7 +716,10 @@ const Main = (() => {
       // a figure that has taken real damage shows its wounds until the hit flash
       // washes the whole sprite white for a frame
       o.spr.material.map = e.flash > 0 ? set.flash : (WOUND_ON && Game.wounded(e) ? set.hurt : set.walk);
-      o.spr.material.color.setScalar(spriteLight(e.x, e.y));
+      const lit = spriteLight(e.x, e.y);
+      // a wading figure is soaked: cooled, darkened, and cut off at the waterline
+      if (wet) o.spr.material.color.setRGB(lit * 0.78, lit * 0.86, lit * 1.02);
+      else o.spr.material.color.setScalar(lit);
       o.spr.scale.set(e.def.h * asp, e.def.h, 1);
       // the flash blooms for a beat after the shot, aimed at the player
       const mk = e.dead ? 0 : Math.max(0, e.mz || 0) / 0.16;
@@ -730,9 +736,11 @@ const Main = (() => {
         o.shadow.scale.set(e.def.h * asp * 1.25 * (0.4 + k * 0.6), e.def.h * 0.6 * (0.4 + k * 0.6), 1);
         o.shadow.material.opacity = 0.55 * (0.35 + k * 0.65);
       } else {
-        o.grp.rotation.x = 0; o.grp.position.y = 0;
+        o.grp.rotation.x = 0; o.grp.position.y = -sink;
         o.spr.material.opacity = 1;
-        o.shadow.material.opacity = 0.55;
+        o.shadow.material.opacity = wet ? 0.3 : 0.55;
+        if (wet) o.shadow.scale.set(e.def.h * asp * 1.55, e.def.h * 0.78, 1);
+        else o.shadow.scale.set(e.def.h * asp * 1.25, e.def.h * 0.6, 1);
         if (e.flash > 0.1) { eFlash.position.set(e.x, 1.3, e.y); eFlash.intensity = 1.5; }
       }
     }

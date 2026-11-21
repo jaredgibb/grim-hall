@@ -96,8 +96,10 @@
     let moved = false;
     if (dx && !isBlocked(e.x + dx, e.y, r)) { e.x += dx; moved = true; }
     if (dy && !isBlocked(e.x, e.y + dy, r)) { e.y += dy; moved = true; }
-    if (moved && !wasWet && inWater(e.x, e.y) && G.fx.length < 120)
-      G.fx.push({ kind: 'splash', x: e.x, y: e.y, t: 0.5, max: 0.5 });
+    if (moved && !wasWet && inWater(e.x, e.y)) {
+      AUDIO.splash();
+      if (G.fx.length < 120) G.fx.push({ kind: 'splash', x: e.x, y: e.y, t: 0.5, max: 0.5 });
+    }
     return moved;
   }
   function collidePlayer() {   // push the player out of living enemies
@@ -341,7 +343,7 @@
       moveEnt(p, mx * spd * dt, my * spd * dt, TUNE.playerR);
       p.bob += dt * 9;
       p.stepT -= dt;
-      if (p.stepT <= 0) { p.stepT = 0.38; AUDIO.step(); }
+      if (p.stepT <= 0) { p.stepT = 0.38; (inWater(p.x, p.y) ? AUDIO.wade() : AUDIO.step()); }
     }
     const auto = WEAPONS[p.w].auto;
     if (inp.fire) {

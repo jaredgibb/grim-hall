@@ -339,6 +339,12 @@ test('stepping into the water makes a splash', () => {
   assert.strictEqual(G.fx.filter(f => f.kind === 'splash').length, 0, 'walking on stone splashes nothing');
 });
 
+test('wading has its own sounds', () => {
+  require('../js/audio.js');
+  assert.ok(typeof GH.sound.wade === 'function', 'steps in the shallows use a wade sound');
+  assert.ok(typeof GH.sound.splash === 'function', 'breaking the surface has a splash');
+});
+
 test('a wounded enemy limps, a healthy one does not', () => {
   const run = hp => {
     fresh(0, 41);
