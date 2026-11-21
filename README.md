@@ -52,6 +52,10 @@ Death/win screens show score, time, accuracy (hits/shots) and a rank (HALLMASTER
   nail heads and a bolted brace beam, with pitch seams that glow in the slag themes.
 - **Volumetric torch shafts** — additive cones driven by the same flicker value as the
   torch's point light, with embers spiralling down the beam.
+- **Shallow water** — `w` cells in the maps are a rippling shader surface: wave-normal
+  ripples, fresnel, a specular glint from every torch, foam along the shoreline and a
+  wake that follows whatever is wading. Wading is 38% slower and every step in throws a
+  splash ring on the floor.
 - **Post pass** — bloom (quarter-res bright pass, separable Gaussian blur, composite),
   vignette, grain, scanlines, chromatic aberration and a per-theme colour grade, all
   hand-written GLSL.
@@ -68,7 +72,8 @@ Death/win screens show score, time, accuracy (hits/shots) and a rank (HALLMASTER
 `?mv=fwd` auto-walks, `?fire=1` auto-fires, and the render features can be turned off one
 at a time for an A/B screenshot: `?post=0` (no bloom/composite), `?grade=0` (no theme
 grade), `?nocone` (no torch shafts or embers), `?glow=0` (no emissive slag), `?noplink`
-(plank walls rendered as brick), `?nowound` (wounded figures use their clean sprites).
+(plank walls rendered as brick), `?nowound` (wounded figures use their clean sprites),
+`?nowater` (no water surface).
 
 ## Files
 - `index.html` — page shell, HUD, overlays

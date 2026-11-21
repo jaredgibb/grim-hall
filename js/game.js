@@ -42,6 +42,7 @@
   let W = 0, H = 0;
   let grid = [];                     // level rows as characters (minimap / renderer)
   let solid = new Uint8Array(0);     // 1 = blocks movement & sight, updated as doors slide
+  let water = new Uint8Array(0);     // 1 = shallow water, wading through it is slow
   let doorAt = [];                   // flat: door object or null
   let FLOW = null;                   // flat: FLOW[i] = next cell toward the player
   let flowT = 0;
@@ -53,6 +54,9 @@
   // Both the sim and the renderer read this: below woundFrac of its health a
   // figure limps and is painted with blood work.
   const wounded = e => e.hp < e.def.hp * TUNE.woundFrac;
+  // shallow water: walkable, but everything moving through it wades
+  const cellWater = (cx, cy) => cx >= 0 && cy >= 0 && cx < W && cy < H && water[idx(cx, cy)] === 1;
+  const inWater = (x, y) => cellWater(Math.floor(x), Math.floor(y));
 
   function cell(x, y) {
     const cx = Math.floor(x), cy = Math.floor(y);
@@ -85,9 +89,15 @@
   }
   // slide along walls: each axis applied independently; true if anything moved
   function moveEnt(e, dx, dy, r) {
+    // wading: an entity that is standing in shallow water moves waterSlow as fast
+    const w = inWater(e.x, e.y) ? TUNE.waterSlow : 1;
+    if (w !== 1) { dx *= w; dy *= w; }
+    const wasWet = inWater(e.x, e.y);
     let moved = false;
     if (dx && !isBlocked(e.x + dx, e.y, r)) { e.x += dx; moved = true; }
     if (dy && !isBlocked(e.x, e.y + dy, r)) { e.y += dy; moved = true; }
+    if (moved && !wasWet && inWater(e.x, e.y) && G.fx.length < 120)
+      G.fx.push({ kind: 'splash', x: e.x, y: e.y, t: 0.5, max: 0.5 });
     return moved;
   }
   function collidePlayer() {   // push the player out of living enemies
@@ -151,6 +161,7 @@
     AUDIO = NS.sound || SILENT;
     grid = level.map; W = grid[0].length; H = grid.length;
     solid = new Uint8Array(W * H);
+    water = new Uint8Array(W * H);
     doorAt = new Array(W * H).fill(null);
     rng = makeRng(G.seed || Date.now());
     G.enemies = []; G.items = []; G.doors = []; G.projs = []; G.fx = [];
@@ -159,6 +170,7 @@
       for (let x = 0; x < W; x++) {
         const c = grid[y][x], i = idx(x, y);
         solid[i] = isWallCh(c) ? 1 : 0;
+        water[i] = c === 'w' ? 1 : 0;
         if (c === 'P') { px = x + 0.5; py = y + 0.5; }
         else if (c === 'D' || c === 'W') {
           const dr = { cx: x, cy: y, open: 0, push: c === 'W', found: false };
@@ -564,7 +576,8 @@
     tune: () => TUNE,
     buildWorld, update, tryFire, damagePlayer, killEnemy, explode, computeFlow,
     castRay, rayHit, hasLOS, isBlocked, cell, cellSolid, doorAt, torchCells, setDoorOpen,
-    moveEnt, collidePlayer, separateEnemies, makeRng, wounded,
+    moveEnt, collidePlayer, separateEnemies, makeRng, wounded, inWater,
+    waterCells: () => { const out = []; for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (water[idx(x, y)]) out.push([x, y]); return out; },
     width: () => W, height: () => H, grid: () => grid,
     levelCount: () => NS.levels.length,
     nextLevel: () => { buildWorld((G.level + 1) % NS.levels.length); return G.level; },

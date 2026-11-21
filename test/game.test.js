@@ -299,6 +299,46 @@ test('plank walls are as solid as brick', () => {
   assert.ok(Game.castRay(x - 0.5, y + 0.5, 1, 0) < 1.5, 'rays stop on the plank face');
 });
 
+test('shallow water is open ground that you wade, not a wall', () => {
+  fresh(14, 7);
+  const cells = Game.waterCells();
+  assert.ok(cells.length > 0, 'the sunken quarry is flooded');
+  const [wx, wy] = cells[0];
+  assert.ok(!Game.cellSolid(wx, wy), 'water is not solid');
+  assert.ok(Game.inWater(wx + 0.5, wy + 0.5), 'the cell reads as water');
+  assert.ok(!Game.inWater(wx + 0.5, wy - 0.5), 'the cell above the basin is not water');
+  assert.ok(!Game.isBlocked(wx + 0.5, wy + 0.5, GH.tune.playerR), 'you can stand in it');
+  assert.ok(Game.hasLOS(wx - 0.5, wy + 0.5, wx + 1.5, wy + 0.5), 'water does not block sight');
+});
+
+test('wading is slower than walking on dry stone', () => {
+  fresh(14, 7);
+  const [wx, wy] = Game.waterCells()[0];
+  const step = 0.4;
+  const wet = { x: wx + 0.2, y: wy + 0.5 };
+  const dry = { x: 1.2, y: wy + 0.5 };
+  assert.ok(!Game.inWater(dry.x, dry.y), 'the comparison cell is dry');
+  Game.moveEnt(wet, step, 0, GH.tune.playerR);
+  Game.moveEnt(dry, step, 0, GH.tune.playerR);
+  const waded = wet.x - (wx + 0.2), walked = dry.x - 1.2;
+  assert.ok(Math.abs(waded - step * GH.tune.waterSlow) < 1e-9, `waded ${waded}, expected ${step * GH.tune.waterSlow}`);
+  assert.ok(Math.abs(walked - step) < 1e-9, `walked ${walked}`);
+});
+
+test('stepping into the water makes a splash', () => {
+  fresh(14, 9);
+  G.fx.length = 0;
+  const e = { x: 6.5, y: 7.5, hp: GH.enemy.g.hp, def: GH.enemy.g, dead: false };
+  assert.ok(!Game.inWater(e.x, e.y), 'the grunt starts on dry planking');
+  Game.moveEnt(e, 1.4, 0, GH.enemy.g.r * 0.9);
+  assert.ok(Game.inWater(e.x, e.y), 'the grunt waded into the basin');
+  assert.ok(G.fx.some(f => f.kind === 'splash'), 'entering the water made a splash');
+  const dry = { x: 1.5, y: 7.5, hp: 22, def: GH.enemy.g };
+  G.fx.length = 0;
+  Game.moveEnt(dry, 0.4, 0, GH.enemy.g.r * 0.9);
+  assert.strictEqual(G.fx.filter(f => f.kind === 'splash').length, 0, 'walking on stone splashes nothing');
+});
+
 test('a wounded enemy limps, a healthy one does not', () => {
   const run = hp => {
     fresh(0, 41);

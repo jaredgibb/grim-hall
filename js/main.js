@@ -10,6 +10,7 @@ const Main = (() => {
   const TAU = NS.tau, WEAPONS = NS.weapons, LEVELS = NS.levels;
   let renderer, scene, camera, ART;
   let worldGroup = null, doorMeshes = [], enemyObjs = new Map(), itemObjs = new Map(), projObjs = new Map(), fxObjs = new Map(), corpseObjs = new Map();
+  let waterMesh = null;
   let weaponMesh, flashMesh, muzzleLight, muzzlePos, exitMesh, exitLight, flashLight, eFlash;
   let torches = [], flames = [], cones = [], embers = [], coneGeo = null;
   let msgDiv, lastMini = 0, popDiv, popUntil = 0, lastKills = 0, dmgDiv;
@@ -199,6 +200,13 @@ const Main = (() => {
           embers.push(e);
         }
       }
+    }
+    // shallow water: every `w` cell gets a rippling shader surface, lit by the
+    // torches above it. ?nowater drops it for an A/B render.
+    const wcells = Game.waterCells();
+    if (wcells.length && !location.search.includes('nowater')) {
+      waterMesh = mkWater(wcells, (LEVELS[G.level] || {}).theme);
+      if (waterMesh) worldGroup.add(waterMesh);
     }
     // wall decorations on wall faces that border floor
     const decorKeys = ['poster', 'skull', 'pipes'];
@@ -439,6 +447,21 @@ const Main = (() => {
       l.intensity = fl;
       if (cones[i]) cones[i].material.uniforms.flicker.value = fl;
     }
+    // the water shader reads the clock, the torch flicker and the positions of
+    // whatever is wading, so the wake follows the feet
+    if (waterMesh) {
+      const wu = waterMesh.material.uniforms;
+      wu.time.value = t;
+      for (let i = 0; i < torches.length && i < 16; i++) wu.flicker.value[i] = torches[i].intensity;
+      const wakers = wu.wader.value;
+      let n = 0;
+      if (Game.inWater(G.player.x, G.player.y)) { wakers[n++].set(G.player.x, 0, G.player.y); }
+      for (const e of G.enemies) {
+        if (n >= 2) break;
+        if (!e.dead && Game.inWater(e.x, e.y)) wakers[n++].set(e.x, 0, e.y);
+      }
+      wu.waderN.value = n;
+    }
     // embers spiral down the shaft and fade out before they reach the floor
     for (const e of embers) {
       const u = e.userData;
@@ -498,6 +521,121 @@ const Main = (() => {
       side: THREE.DoubleSide,
     });
     return new THREE.Mesh(coneGeo, m);
+  }
+  // Shallow water: one merged mesh over every flooded cell. The surface is a
+  // hand-written ripple shader — wave height, torch glints, foam where the water
+  // meets land and a wake around whatever is wading through it.
+  function mkWater(cells, theme) {
+    const MAP = Game.grid(), MAPW = Game.width(), MAPH = Game.height();
+    const solid = (x, y) => x < 0 || y < 0 || x >= MAPW || y >= MAPH ||
+      MAP[y][x] === '#' || MAP[y][x] === 'T' || MAP[y][x] === '~';
+    const pal = ART.pal || (ART.themes && ART.themes[theme]) || {};
+    const w = pal.water || [30, 46, 52];
+    const gl = pal.glow ? [1, 1, 1] : [0.72, 0.86, 0.92];
+    const pos = [], foam = [], idx = [];
+    for (const [x, y] of cells) {
+      const base = pos.length / 3;
+      const corners = [[x, y], [x + 1, y], [x + 1, y + 1], [x, y + 1]];
+      for (const [cx, cy] of corners) {
+        pos.push(cx, 0.05, cy);
+        // how much land touches this corner: 0 = open water, 1 = fully hemmed in
+        let touch = 0;
+        for (const [dx, dy] of [[-1, -1], [0, -1], [-1, 0], [0, 0]])
+          if (solid(cx + dx, cy + dy)) touch++;
+        foam.push(touch / 4);
+      }
+      idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('foam', new THREE.Float32BufferAttribute(foam, 1));
+    geo.computeVertexNormals();
+    // the shader declares fixed-size arrays, so the uniform arrays are always
+    // padded to 16 — a short array makes the GL driver reject the program
+    const torchU = [];
+    for (const l of torches) torchU.push(new THREE.Vector3(l.position.x, l.position.y, l.position.z));
+    while (torchU.length < 16) torchU.push(new THREE.Vector3(0, 0, 0));
+    const mat = new THREE.ShaderMaterial({
+      uniforms: {
+        time: { value: 0 },
+        tint: { value: new THREE.Color(w[0] / 255, w[1] / 255, w[2] / 255) },
+        glint: { value: new THREE.Color(gl[0], gl[1], gl[2]) },
+        torches: { value: torchU },
+        flicker: { value: torchU.map(() => 1) },
+        torchN: { value: torchU.length },
+        wader: { value: [new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, 0)] },
+        waderN: { value: 0 },
+      },
+      vertexShader: `
+        uniform float time;
+        attribute float foam;
+        varying vec3 vW;
+        varying float vFoam;
+        void main() {
+          vec4 wp = modelMatrix * vec4(position, 1.0);
+          float h = 0.022 * sin(wp.x * 3.1 + time * 1.4) * cos(wp.z * 2.7 - time * 1.1)
+                  + 0.012 * sin((wp.x + wp.z) * 4.6 + time * 2.2);
+          wp.y += h;
+          vW = wp.xyz;
+          vFoam = foam;
+          gl_Position = projectionMatrix * viewMatrix * wp;
+        }`,
+      fragmentShader: `
+        uniform float time;
+        uniform vec3 tint;
+        uniform vec3 glint;
+        uniform vec3 torches[16];
+        uniform float flicker[16];
+        uniform int torchN;
+        uniform vec3 wader[2];
+        uniform int waderN;
+        varying vec3 vW;
+        varying float vFoam;
+        void main() {
+          vec2 p = vW.xz;
+          float a = p.x * 3.1 + time * 1.4;
+          float b = p.y * 2.7 - time * 1.1;
+          float h = 0.022 * sin(a) * cos(b) + 0.012 * sin((p.x + p.y) * 4.6 + time * 2.2);
+          // surface normal from the wave, so torches glint off the ripples
+          vec3 n = normalize(vec3(-0.068 * cos(a) * cos(b) - 0.055 * cos((p.x + p.y) * 4.6 + time * 2.2),
+                                 1.0,
+                                 0.059 * sin(a) * sin(b) - 0.055 * cos((p.x + p.y) * 4.6 + time * 2.2)));
+          vec3 toEye = normalize(cameraPosition - vW);
+          float fresnel = pow(1.0 - max(dot(n, toEye), 0.0), 3.0);
+          float lit = 0.0;
+          vec3 col = tint * (0.55 + 20.0 * h);
+          for (int i = 0; i < 16; i++) {
+            if (i >= torchN) break;
+            vec3 L = torches[i] - vW;
+            float d = length(L);
+            if (d > 8.0) continue;
+            L /= d;
+            float f = flicker[i] * (1.0 - d / 8.0);
+            if (f > lit) lit = f;
+            vec3 r = reflect(-L, n);
+            float spec = pow(max(dot(r, toEye), 0.0), 22.0);
+            col += glint * spec * f * 1.1;
+            col += tint * f * 0.18;   // warm pool under each torch
+          }
+          // a water surface seen at a shallow angle mirrors whatever light is
+          // nearby, so the reflection dies out in the dark corners of the basin
+          col += glint * fresnel * 0.30 * lit;
+          // foam along the shoreline, and a wake where something is wading
+          float shore = vFoam * (0.55 + 0.45 * sin(time * 2.4 + p.x * 4.0 + p.y * 3.0));
+          float wake = 0.0;
+          for (int i = 0; i < 2; i++) {
+            if (i >= waderN) break;
+            float wd = distance(p, wader[i].xz);
+            wake += exp(-wd * 2.4) * (0.5 + 0.5 * sin(wd * 9.0 - time * 5.5));
+          }
+          col += glint * min(shore * 0.4 + wake * 0.3, 0.6);
+          gl_FragColor = vec4(col, 0.92);
+        }`,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    return new THREE.Mesh(geo, mat);
   }
   // Sprites are flat art, so the scene's lights have to be faked on them: torch
   // pools, the player's own glow and the muzzle flash all push the tint up.
@@ -646,6 +784,13 @@ const Main = (() => {
           m.position.set(f.x, 0.012, f.y);
           scene.add(m);
           o = { f, line: m };
+        } else if (f.kind === 'splash') {
+          const m = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 1.2),
+            new THREE.MeshBasicMaterial({ map: ART.splash, transparent: true, depthWrite: false }));
+          m.rotation.x = -Math.PI / 2; m.rotation.z = Math.random() * 9;
+          m.position.set(f.x, 0.06, f.y);
+          scene.add(m);
+          o = { f, ring: m };
         } else if (f.kind === 'hole') {
           // a bullet that missed lands in the masonry: a decal on the exact face
           // the ray struck, oriented by the face normal
@@ -666,6 +811,7 @@ const Main = (() => {
       if (o.spr) { const sc = f.kind === 'boom' ? 0.4 + k * 1.8 : f.kind === 'blood' ? 0.3 + k * 0.55 : 0.18; o.spr.scale.set(sc, sc, 1); if (f.kind === 'boom') o.spr.material.map = ART.boom[Math.min(3, Math.floor(k * 4))]; o.spr.material.opacity = 1 - k * 0.6; }
       if (o.line && f.kind === 'tracer') o.line.material.opacity = 1 - k;
       if (o.line && f.kind === 'splat') o.line.material.opacity = f.t < 3 ? Math.max(0, f.t / 3) : 1;
+      if (o.ring) { const s = 0.3 + k * 1.1; o.ring.scale.set(s, s, 1); o.ring.material.opacity = (1 - k) * 0.85; }
       if (o.decal) o.decal.material.opacity = f.t < 2.5 ? f.t / 2.5 : 1;
       if (f.kind === 'msg' && k > 0.8) msgDiv.style.opacity = 1 - (k - 0.8) * 5;
     }
@@ -724,6 +870,7 @@ const Main = (() => {
     for (let y = 0; y < MAPH; y++) for (let x = 0; x < MAPW; x++) {
       const ch = MAP[y][x];
       if (ch === '~') { g.fillStyle = '#8a6a44'; g.fillRect(x * s, y * s, s, s); }
+      else if (ch === 'w') { g.fillStyle = '#2b4c57'; g.fillRect(x * s, y * s, s, s); }
       else if (ch === '#' || ch === 'T' || ch === 'W') { g.fillStyle = '#666'; g.fillRect(x * s, y * s, s, s); }
       else if (ch === 'D') { g.fillStyle = '#a80'; g.fillRect(x * s, y * s, s, s); }
     }

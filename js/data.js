@@ -3,6 +3,7 @@
 // Everything hangs off one namespace object (GH) - art/audio/game/main attach their
 // own keys to it, so nothing else leaks into the global scope.
 // Legend:  # brick   T metal   D door   W pushwall (secret)   . floor
+//          ~ timber planks   w shallow water
 //          P player  X exit
 //          g grunt   u gunner  r brute  O overlord
 //          1 shotgun 2 machinegun  a sg ammo  b mg ammo  h +30hp  H +60hp  k +50 armor
@@ -40,6 +41,7 @@ const GH = {
     flinchTime: 0.3,           // stagger after a non-lethal hit
     woundFrac: 0.55,           // below this share of max hp a figure is wounded
     woundSlow: 0.78,           // and limps: everything it does is this slow
+    waterSlow: 0.62,           // wading through a `w` cell is this slow
     chargeTelegraph: 0.45,     // brute wind-up before the lunge
     chargeTime: 0.5, chargeSpeed: 7.5,
     chargeRangeMin: 2.2, chargeRangeMax: 9,
@@ -214,7 +216,7 @@ const GH = {
     },
     {
       // sunken cistern: three basins per tier joined by arch doors, metal
-      // pillars standing in the galleries
+      // pillars standing in the galleries, and two flooded galleries you wade
       name: 'CISTERN OF SALT',
       theme: 'cistern',
       tune: { torchCount: 13, decorCount: 18, gunAlarmRadius: 16, hitChancePerDist: 0.045 },
@@ -227,7 +229,7 @@ const GH = {
         "####D####D####D####D####",
         "#...g...#..u...#...r...#",
         "#...T..T#...T..#...T...#",
-        "#......................#",
+        "#...wwwwwww............#",
         "####D####D####D####D####",
         "#..O....#...b..#..k....#",
         "#.......D......D.......#",
@@ -235,7 +237,7 @@ const GH = {
         "####D####D####D####D####",
         "#......................#",
         "#....T..#.....T#.......#",
-        "#......................#",
+        "#.........wwwww........#",
         "#..H....#...T..#....X..#",
         "#############W##########",
         "#############Hb.k#######",
@@ -479,7 +481,8 @@ const GH = {
       ],
     },
     {
-      // a flooded basin ringed by galleries shored with planks
+      // a flooded basin ringed by galleries shored with planks, with the shoring
+      // breached in two places so the quarry has to be waded
       name: 'SUNKEN QUARRY',
       theme: 'cistern',
       tune: { torchCount: 16, decorCount: 22, gunAlarmRadius: 16 },
@@ -490,12 +493,12 @@ const GH = {
         "#a..~............~.r.#",
         "#...~............~..h#",
         "#####D#####D####D#####",
-        "#......~......~......#",
-        "#1g....~......~....u.#",
-        "#......~gTTTT.~......#",
-        "#......~.TTTTg~......#",
-        "#.....g~......~r..g..#",
-        "#......~......~......#",
+        "#......~wwwwww~......#",
+        "#1g....wwwwwww~....u.#",
+        "#......~gTTTTw~......#",
+        "#......~wTTTTg~......#",
+        "#.....g~wwwwww~r..g..#",
+        "#......~wwwwwwww.....#",
         "#####D#####D####D#####",
         "#.HW.........g......g#",
         "#2.#.........h.......#",

@@ -65,31 +65,31 @@
   // lambert wash the retro look used.
   const TS = 128;
   const THEMES = {
-    hall:  { brick: [74, 38, 32], mortar: [34, 22, 18], metal: [61, 71, 84], accent: '#8a5a3a' },
-    crypt: { brick: [52, 54, 60], mortar: [22, 24, 28], metal: [48, 52, 60], accent: '#4a5568' },
+    hall:  { brick: [74, 38, 32], mortar: [34, 22, 18], metal: [61, 71, 84], accent: '#8a5a3a', water: [30, 46, 52] },
+    crypt: { brick: [52, 54, 60], mortar: [22, 24, 28], metal: [48, 52, 60], accent: '#4a5568', water: [24, 34, 40] },
     forge: { brick: [66, 44, 30], mortar: [26, 20, 16], metal: [78, 60, 42], accent: '#b06a2a',
-             glow: '#c9531f', wood: [84, 62, 38] },
-    vault: { brick: [44, 52, 62], mortar: [18, 22, 26], metal: [40, 46, 54], accent: '#2f6b7a' },
+             glow: '#c9531f', wood: [84, 62, 38], water: [42, 36, 30] },
+    vault: { brick: [44, 52, 62], mortar: [18, 22, 26], metal: [40, 46, 54], accent: '#2f6b7a', water: [22, 40, 50] },
     // cistern: damp salt-green stone; bone: pale ash-lime masonry
     cistern: { brick: [46, 62, 66], mortar: [20, 28, 30], metal: [56, 72, 78], accent: '#3f7a86',
-               drip: 'rgba(214,226,218,0.20)', wood: [58, 62, 52] },
+               drip: 'rgba(214,226,218,0.20)', wood: [58, 62, 52], water: [24, 58, 64] },
     bone:    { brick: [86, 82, 72], mortar: [38, 34, 28], metal: [96, 92, 80], accent: '#c8b78a',
-               drip: 'rgba(232,222,200,0.16)', wood: [112, 98, 76] },
+               drip: 'rgba(232,222,200,0.16)', wood: [112, 98, 76], water: [46, 54, 52] },
     // frost: icy slate with verdigris on the iron; ash: soot-grey cinder block
     frost:   { brick: [58, 66, 78], mortar: [24, 30, 36], metal: [70, 86, 98], accent: '#6fa8c4',
-               drip: 'rgba(196,222,236,0.18)', wood: [70, 82, 92] },
+               drip: 'rgba(196,222,236,0.18)', wood: [70, 82, 92], water: [26, 44, 54] },
     ash:     { brick: [64, 60, 58], mortar: [26, 24, 22], metal: [72, 68, 64], accent: '#8f8477',
-               drip: 'rgba(190,180,170,0.14)' },
+               drip: 'rgba(190,180,170,0.14)', water: [34, 38, 40] },
     // magma: basalt streaked with molten iron; spire: cold green-black slate
     magma:   { brick: [56, 36, 32], mortar: [20, 14, 12], metal: [92, 62, 44], accent: '#e2713a',
-               drip: 'rgba(240,120,50,0.22)', glow: '#ff8a3a' },
+               drip: 'rgba(240,120,50,0.22)', glow: '#ff8a3a', water: [56, 34, 28] },
     spire:   { brick: [44, 52, 48], mortar: [18, 22, 22], metal: [60, 70, 66], accent: '#3f8a72',
-               drip: 'rgba(150,200,180,0.16)' },
+               drip: 'rgba(150,200,180,0.16)', water: [24, 44, 40] },
     // glass: pale quartz with luminous crystal veins; onyx: black polished stone
     glass:   { brick: [68, 76, 90], mortar: [24, 28, 36], metal: [104, 118, 132], accent: '#9fc6d8',
-               drip: 'rgba(206,226,238,0.16)', glow: '#7fd6e4', halo: 'rgba(150,200,230,0.5)' },
+               drip: 'rgba(206,226,238,0.16)', glow: '#7fd6e4', halo: 'rgba(150,200,230,0.5)', water: [30, 52, 62] },
     onyx:    { brick: [32, 31, 36], mortar: [14, 14, 16], metal: [54, 52, 58], accent: '#c9a24a',
-               drip: 'rgba(201,162,74,0.12)', glow: '#e8c05a', halo: 'rgba(230,190,110,0.5)' },
+               drip: 'rgba(201,162,74,0.12)', glow: '#e8c05a', halo: 'rgba(230,190,110,0.5)', water: [18, 22, 26] },
   };
   function mkSet() {
     const a = mkc(TS, TS), h = mkc(TS, TS), r = mkc(TS, TS), e = mkc(TS, TS);
@@ -1147,6 +1147,20 @@
     for (let i = 0; i < 10; i++) { const a = rnd() * TAU, r = rnd() * 12; g.beginPath(); g.arc(16 + Math.cos(a) * r, 16 + Math.sin(a) * r, 2 + rnd() * 3, 0, 7); g.fill(); }
     return c;
   }
+  // the ring of spray a footfall kicks up when something steps into shallow water
+  function splashRing() {
+    const c = mkc(48, 48), g = c.getContext('2d');
+    g.strokeStyle = 'rgba(226,236,232,0.55)'; g.lineWidth = 2.4;
+    for (let i = 0; i < 3; i++) {
+      g.beginPath(); g.arc(24, 24, 6 + i * 6, 0, TAU); g.stroke();
+    }
+    g.fillStyle = 'rgba(232,242,238,0.85)';
+    for (let i = 0; i < 14; i++) {
+      const a = rnd() * TAU, r = 10 + rnd() * 12;
+      g.beginPath(); g.arc(24 + Math.cos(a) * r, 24 + Math.sin(a) * r, 1 + rnd() * 2.2, 0, 7); g.fill();
+    }
+    return c;
+  }
   function ceilLight() {
     const c = mkc(64, 64), g = c.getContext('2d');
     g.fillStyle = '#14161a'; g.fillRect(0, 0, 64, 64);
@@ -1236,6 +1250,8 @@
     const pr = projSprites();
     const A = {
       seed,
+      theme,
+      pal: THEMES[theme] || THEMES.hall,
       tex: texTex,
       spr: Object.fromEntries(Object.keys(ENEMY_PAL).map(t =>
         [t, enemySprites(ENEMY_PAL[t], ENEMY_SPR[t][0], ENEMY_SPR[t][1], t)])),
@@ -1259,6 +1275,7 @@
       proj: { shell: tex(pr.shell, false, 'shell'), bomb: tex(pr.bomb, false, 'bomb') },
       decor: { poster: texTex.poster, skull: texTex.skull, pipes: texTex.pipes },
       blood: tex(bloodPuff(), false, 'blood'), splat: tex(bloodSplat(), false, 'splat'),
+      splash: tex(splashRing(), false, 'splash'),
       hole: tex(bulletHole(), false, 'hole'),
       shadow: tex(shadowBlob(), false, 'shadow'),
       ceilLight: texTex.ceilLight,
@@ -1277,6 +1294,7 @@
 
   const Art = {
     mkc, px, tex, mat, noise, build, setSeed, grade,
+    themes: THEMES,
     figure: enemyFigure, enemyPal: ENEMY_PAL, enemySpr: ENEMY_SPR,
     // handy for tests / debugging: how many GPU uploads the pools hold
     poolSize: () => ({ textures: TEX.size, materials: MAT.size, builds: BUILD.size }),
