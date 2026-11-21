@@ -96,11 +96,12 @@ const Main = (() => {
 
     // static walls: one InstancedMesh per material instead of ~256 meshes
     const geo = new THREE.BoxGeometry(1, WALL_H, 1);
-    const brickCells = [], metalCells = [];
+    const brickCells = [], metalCells = [], plankCells = [];
     for (let y = 0; y < MAPH; y++) for (let x = 0; x < MAPW; x++) {
       const c = MAP[y][x];
       if (c === '#') brickCells.push([x, y]);
       else if (c === 'T') metalCells.push([x, y]);
+      else if (c === '~') plankCells.push([x, y]);
     }
     const addInstanced = (cells, mat) => {
       if (!cells.length) return;
@@ -118,6 +119,7 @@ const Main = (() => {
     // PBR surfaces: albedo + normal + roughness, so torch light actually pools
     // on the stone and the metal glints instead of washing flat
     const glowOn = !location.search.includes('glow=0');   // A/B switch for the slag glow
+    const plankOn = !location.search.includes('noplink');  // A/B switch: render planks as brick
     const pbrMat = (set, rough, metal) => new THREE.MeshStandardMaterial({
       map: set.map, normalMap: set.normal, roughnessMap: set.rough,
       roughness: rough, metalness: metal,
@@ -129,6 +131,7 @@ const Main = (() => {
     });
     addInstanced(brickCells, pbrMat(ART.tex.brick, 0.92, 0.05));
     addInstanced(metalCells, pbrMat(ART.tex.metal, 0.45, 0.75));
+    addInstanced(plankCells, pbrMat(ART.tex.plank, 0.78, 0.04));
 
     // doors and pushwalls animate individually, and keep a direct ref to their logic object
     for (let y = 0; y < MAPH; y++) for (let x = 0; x < MAPW; x++) {
@@ -202,10 +205,10 @@ const Main = (() => {
     let placed = 0, tries = 0;
     while (placed < decorCount && tries++ < 500) {
       const x = 1 + (Math.random() * (MAPW - 2)) | 0, y = 1 + (Math.random() * (MAPH - 2)) | 0;
-      if (MAP[y][x] !== '#' && MAP[y][x] !== 'T') continue;
+      if (MAP[y][x] !== '#' && MAP[y][x] !== 'T' && MAP[y][x] !== '~') continue;
       const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]].filter(([dx, dy]) => {
         const nx = x + dx, ny = y + dy;
-        return MAP[ny] && MAP[ny][nx] !== '#' && MAP[ny][nx] !== 'T' && MAP[ny][nx] !== 'D';
+        return MAP[ny] && MAP[ny][nx] !== '#' && MAP[ny][nx] !== 'T' && MAP[ny][nx] !== '~' && MAP[ny][nx] !== 'D';
       });
       if (!dirs.length) continue;
       const [dx, dy] = dirs[(Math.random() * dirs.length) | 0];
@@ -717,7 +720,8 @@ const Main = (() => {
     g.fillStyle = 'rgba(0,0,0,0.7)'; g.fillRect(0, 0, c.width, c.height);
     for (let y = 0; y < MAPH; y++) for (let x = 0; x < MAPW; x++) {
       const ch = MAP[y][x];
-      if (ch === '#' || ch === 'T' || ch === 'W') { g.fillStyle = '#666'; g.fillRect(x * s, y * s, s, s); }
+      if (ch === '~') { g.fillStyle = '#8a6a44'; g.fillRect(x * s, y * s, s, s); }
+      else if (ch === '#' || ch === 'T' || ch === 'W') { g.fillStyle = '#666'; g.fillRect(x * s, y * s, s, s); }
       else if (ch === 'D') { g.fillStyle = '#a80'; g.fillRect(x * s, y * s, s, s); }
     }
     for (const it of G.items) if (!it.taken) { g.fillStyle = '#4af'; g.fillRect(it.x * s - 1, it.y * s - 1, 3, 3); }

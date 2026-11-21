@@ -49,7 +49,7 @@
   const EMPTY_INPUT = { fwd: 0, back: 0, left: 0, right: 0, turn: 0, fire: 0, fireEdge: 0, wantW: -1, sprint: 0 };
   const IN = () => NS.input || EMPTY_INPUT;
   const idx = (cx, cy) => cy * W + cx;
-  const isWallCh = c => c === '#' || c === 'T';
+  const isWallCh = c => c === '#' || c === 'T' || c === '~';
 
   function cell(x, y) {
     const cx = Math.floor(x), cy = Math.floor(y);

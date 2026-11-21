@@ -282,6 +282,23 @@ test('bullet holes are capped so a long firefight cannot grow meshes forever', (
   assert.ok(holes.length <= 40, `expected at most 40 holes, got ${holes.length}`);
 });
 
+test('plank walls are as solid as brick', () => {
+  fresh(13, 12);
+  const lvl = GH.levels[13], W = lvl.map[0].length;
+  let cell = null;
+  for (let y = 1; y < lvl.map.length - 1 && !cell; y++) {
+    for (let x = 1; x < W - 1; x++) {
+      if (lvl.map[y][x] === '~' && lvl.map[y][x - 1] === '.') { cell = [x, y]; break; }
+    }
+  }
+  assert.ok(cell, 'the level has a plank wall with floor beside it');
+  const [x, y] = cell;
+  assert.ok(Game.cellSolid(x, y), 'the plank cell is solid');
+  assert.ok(Game.isBlocked(x + 0.5, y + 0.5, GH.tune.playerR), 'you cannot walk through planks');
+  assert.ok(!Game.hasLOS(x - 0.5, y + 0.5, x + 0.5, y + 0.5), 'planks block sight');
+  assert.ok(Game.castRay(x - 0.5, y + 0.5, 1, 0) < 1.5, 'rays stop on the plank face');
+});
+
 test('the HUD read-out reflects the sim', () => {
   fresh(0, 10);
   const hud = Game.hud();

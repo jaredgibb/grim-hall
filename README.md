@@ -1,6 +1,6 @@
 # GRIM HALL
 
-A Wolfenstein 3D-style retro FPS. Thirteen levels, 3 guns, 4 enemy types, 100% procedural
+A Wolfenstein 3D-style retro FPS. Fifteen levels, 3 guns, 4 enemy types, 100% procedural
 art and audio (no external assets — the only vendored file is the Three.js engine).
 
 ## Run it
@@ -45,6 +45,8 @@ Death/win screens show score, time, accuracy (hits/shots) and a rank (HALLMASTER
   so torch light pools on stone and steel glints instead of washing flat.
 - **Emissive slag** — forge, magma, glass and onyx themes draw luminous veins into an
   emissive map, so those halls light themselves.
+- **Timber walls** — a third wall material (`~` in the maps): boards with grain, knots,
+  nail heads and a bolted brace beam, with pitch seams that glow in the slag themes.
 - **Volumetric torch shafts** — additive cones driven by the same flicker value as the
   torch's point light, with embers spiralling down the beam.
 - **Post pass** — bloom (quarter-res bright pass, separable Gaussian blur, composite),
@@ -60,7 +62,8 @@ Death/win screens show score, time, accuracy (hits/shots) and a rank (HALLMASTER
 `?auto=1` skips the title screen and drops pointer lock, `?tp=x,y,angle` teleports,
 `?mv=fwd` auto-walks, `?fire=1` auto-fires, and the render features can be turned off one
 at a time for an A/B screenshot: `?post=0` (no bloom/composite), `?grade=0` (no theme
-grade), `?nocone` (no torch shafts or embers), `?glow=0` (no emissive slag).
+grade), `?nocone` (no torch shafts or embers), `?glow=0` (no emissive slag), `?noplink`
+(plank walls rendered as brick).
 
 ## Files
 - `index.html` — page shell, HUD, overlays

@@ -68,16 +68,16 @@
     hall:  { brick: [74, 38, 32], mortar: [34, 22, 18], metal: [61, 71, 84], accent: '#8a5a3a' },
     crypt: { brick: [52, 54, 60], mortar: [22, 24, 28], metal: [48, 52, 60], accent: '#4a5568' },
     forge: { brick: [66, 44, 30], mortar: [26, 20, 16], metal: [78, 60, 42], accent: '#b06a2a',
-             glow: '#c9531f' },
+             glow: '#c9531f', wood: [84, 62, 38] },
     vault: { brick: [44, 52, 62], mortar: [18, 22, 26], metal: [40, 46, 54], accent: '#2f6b7a' },
     // cistern: damp salt-green stone; bone: pale ash-lime masonry
     cistern: { brick: [46, 62, 66], mortar: [20, 28, 30], metal: [56, 72, 78], accent: '#3f7a86',
-               drip: 'rgba(214,226,218,0.20)' },
+               drip: 'rgba(214,226,218,0.20)', wood: [58, 62, 52] },
     bone:    { brick: [86, 82, 72], mortar: [38, 34, 28], metal: [96, 92, 80], accent: '#c8b78a',
-               drip: 'rgba(232,222,200,0.16)' },
+               drip: 'rgba(232,222,200,0.16)', wood: [112, 98, 76] },
     // frost: icy slate with verdigris on the iron; ash: soot-grey cinder block
     frost:   { brick: [58, 66, 78], mortar: [24, 30, 36], metal: [70, 86, 98], accent: '#6fa8c4',
-               drip: 'rgba(196,222,236,0.18)' },
+               drip: 'rgba(196,222,236,0.18)', wood: [70, 82, 92] },
     ash:     { brick: [64, 60, 58], mortar: [26, 24, 22], metal: [72, 68, 64], accent: '#8f8477',
                drip: 'rgba(190,180,170,0.14)' },
     // magma: basalt streaked with molten iron; spire: cold green-black slate
@@ -222,6 +222,85 @@
     g.fillStyle = '#14181e';
     for (let x = 70; x < 118; x += 16) { g.beginPath(); g.moveTo(x, 104); g.lineTo(x + 8, 88); g.lineTo(x + 16, 88); g.lineTo(x + 8, 104); g.fill(); }
     noise(g, TS, TS, 160, 0.06, 0.2, 2);
+    return s;
+  }
+  // Timber wall: vertical boards braced by a horizontal beam. Grain, knots, nail
+  // heads and pitch seams give the height field enough relief that the normal map
+  // reads as boards rather than a flat panel.
+  function planks(theme) {
+    const s = mkSet(), g = s.g, hg = s.hg, rg = s.rg;
+    const pal = THEMES[theme] || THEMES.hall;
+    const wood = pal.wood || [92, 70, 44];
+    g.fillStyle = 'rgb(' + pal.mortar.join(',') + ')'; g.fillRect(0, 0, TS, TS);
+    hg.fillStyle = '#181818'; hg.fillRect(0, 0, TS, TS);   // the seam between boards is a shadow
+    rg.fillStyle = '#d8d8d8'; rg.fillRect(0, 0, TS, TS);
+    for (let i = 0; i < 4; i++) {
+      const x0 = i * 32, v = 18 + rnd() * 26;
+      g.fillStyle = 'rgb(' + [wood[0] + v, wood[1] + v * 0.7, wood[2] + v * 0.5].map(x => Math.round(x)).join(',') + ')';
+      g.fillRect(x0 + 1, 0, 30, TS);
+      hg.fillStyle = 'rgb(' + (120 + v) + ',0,0)'; hg.fillRect(x0 + 1, 0, 30, TS);
+      rg.fillStyle = 'rgb(' + (150 + (rnd() * 40 | 0)) + ',0,0)'; rg.fillRect(x0 + 1, 0, 30, TS);
+      g.strokeStyle = 'rgba(28,18,10,0.45)'; g.lineWidth = 1;
+      for (let k = 0; k < 6; k++) {
+        let y = rnd() * TS;
+        g.beginPath(); g.moveTo(x0 + 1, y);
+        for (let x = x0 + 7; x < x0 + 31; x += 6) { y += rnd() * 4 - 2; g.lineTo(x, y); }
+        g.stroke();
+      }
+      if (rnd() < 0.7) {                                     // knot: halo, rings, dark heart
+        const kx = x0 + 6 + (rnd() * 22 | 0), ky = rnd() * TS | 0, kr = 3 + (rnd() * 4 | 0);
+        g.fillStyle = 'rgba(255,230,190,0.20)';
+        g.beginPath(); g.arc(kx, ky, kr + 3, 0, TAU); g.fill();
+        for (let r2 = kr; r2 > 0; r2--) {
+          g.strokeStyle = r2 % 2 ? 'rgba(30,18,10,0.55)' : 'rgba(90,62,38,0.5)';
+          g.beginPath(); g.arc(kx, ky, r2, 0, TAU); g.stroke();
+        }
+        hg.fillStyle = '#404040';
+        hg.beginPath(); hg.arc(kx, ky, kr, 0, TAU); hg.fill();
+        rg.fillStyle = '#f8f8f8';
+        rg.beginPath(); rg.arc(kx, ky, kr + 1, 0, TAU); rg.fill();
+      }
+      for (const ny of [6, TS - 6]) {                        // nails
+        g.fillStyle = 'rgb(' + pal.metal.join(',') + ')';
+        g.beginPath(); g.arc(x0 + 15, ny, 2.5, 0, TAU); g.fill();
+        g.fillStyle = 'rgba(255,255,255,0.35)';
+        g.beginPath(); g.arc(x0 + 14, ny - 1, 1, 0, TAU); g.fill();
+        hg.fillStyle = '#e8e8e8';
+        hg.beginPath(); hg.arc(x0 + 15, ny, 2.5, 0, TAU); hg.fill();
+        rg.fillStyle = '#404040';
+        rg.beginPath(); rg.arc(x0 + 15, ny, 2.5, 0, TAU); rg.fill();
+      }
+    }
+    const bx = 54, bw = 16, bv = 6 + rnd() * 14;             // brace beam across the boards
+    g.fillStyle = 'rgb(' + [wood[0] - 12 + bv, wood[1] - 10 + bv * 0.7, wood[2] - 8 + bv * 0.5].map(x => Math.round(x)).join(',') + ')';
+    g.fillRect(0, bx, TS, bw);
+    hg.fillStyle = 'rgb(' + (150 + bv) + ',0,0)'; hg.fillRect(0, bx, TS, bw);
+    g.fillStyle = 'rgba(255,240,210,0.16)'; g.fillRect(0, bx, TS, 2);
+    g.fillStyle = 'rgba(0,0,0,0.4)'; g.fillRect(0, bx + bw - 2, TS, 2);
+    hg.fillStyle = '#202020'; hg.fillRect(0, bx + bw - 2, TS, 2);
+    for (let x = 8; x < TS; x += 32) {                       // beam bolts
+      g.fillStyle = 'rgb(' + pal.metal.join(',') + ')';
+      g.beginPath(); g.arc(x, bx + bw / 2, 3.5, 0, TAU); g.fill();
+      g.fillStyle = 'rgba(255,255,255,0.3)';
+      g.beginPath(); g.arc(x - 1, bx + bw / 2 - 1, 1.4, 0, TAU); g.fill();
+      hg.fillStyle = '#f0f0f0';
+      hg.beginPath(); hg.arc(x, bx + bw / 2, 3.5, 0, TAU); hg.fill();
+      rg.fillStyle = '#303030';
+      rg.beginPath(); rg.arc(x, bx + bw / 2, 3.5, 0, TAU); rg.fill();
+    }
+    // Pitch in the seams: glowing themes bleed light out of the joints.
+    if (pal.glow) {
+      s.glow = true;
+      s.glowColor = pal.glow;
+      for (let i = 1; i < 4; i++) {
+        const x0 = i * 32 - 1;
+        g.fillStyle = pal.halo || 'rgba(255,150,60,0.5)'; g.fillRect(x0 - 1, 0, 4, TS);
+        g.fillStyle = pal.glow; g.fillRect(x0, 0, 2, TS);
+        s.eg.fillStyle = 'rgba(255,255,255,0.9)'; s.eg.fillRect(x0, 0, 2, TS);
+        s.eg.fillStyle = 'rgba(255,255,255,0.45)'; s.eg.fillRect(x0 - 1, 0, 4, TS);
+      }
+    }
+    noise(g, TS, TS, 170, 0.05, 0.18, 2);
     return s;
   }
   function door(theme) {
@@ -1119,6 +1198,7 @@
     const d = n => n + '#' + seed;
     const texTex = {
       brick: pbr(brick(theme), 'brick#' + seed, false), metal: pbr(metal(theme), 'metal#' + seed, false),
+      plank: pbr(planks(theme), 'plank#' + seed, false),
       door: pbr(door(theme), 'door#' + seed, false),
       floor: pbr(floor(theme), 'floor#' + seed, true), ceil: pbr(ceil(theme), 'ceil#' + seed, true),
       exit: tex(exitSign(), false, d('exit')),
