@@ -1,0 +1,10 @@
+{
+  "name": "grim-hall",
+  "version": "1.0.0",
+  "description": "A Wolfenstein-style retro FPS: procedural art, procedural audio, no external assets except vendored Three.js r147",
+  "scripts": {
+    "test": "node --test test/*.js",
+    "serve": "python3 -m http.server 8080"
+  },
+  "license": "MIT"
+}

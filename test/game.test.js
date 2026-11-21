@@ -1,0 +1,237 @@
+// Grim Hall logic tests. Run with: npm test  (node --test test/)
+const test = require('node:test');
+const assert = require('node:assert');
+const GH = require('../js/data.js');
+const Game = require('../js/game.js');
+const { G } = Game;
+
+const DT = 1 / 60;
+
+function sim(ticks, input = {}) {
+  for (let i = 0; i < ticks; i++) {
+    if (G.state !== 'play') break;
+    // rebuilt every tick so "held" inputs (fire, fireEdge) stay live
+    GH.input = Object.assign({ fwd: 0, back: 0, left: 0, right: 0, turn: 0, fire: 0,
+      fireEdge: 0, wantW: -1, sprint: 0 }, input);
+    Game.update(DT);
+  }
+}
+function fresh(level = 0, seed = 1234) {
+  G.seed = seed;
+  Game.buildWorld(level);
+  G.state = 'play';
+  return G;
+}
+
+test('every level matches its own legend', () => {
+  for (let i = 0; i < GH.levels.length; i++) {
+    const lvl = GH.levels[i], W = lvl.map[0].length;
+    assert.ok(lvl.map.every(r => r.length === W), `${lvl.name}: ragged row`);
+    const counts = {};
+    for (const row of lvl.map) for (const c of row) counts[c] = (counts[c] || 0) + 1;
+    assert.strictEqual(counts['P'], 1, `${lvl.name}: needs exactly one player start`);
+    assert.strictEqual(counts['X'], 1, `${lvl.name}: needs exactly one exit`);
+    fresh(i, 1);
+    const enemyTotal = Object.keys(GH.enemy).reduce((a, c) => a + (counts[c] || 0), 0);
+    assert.strictEqual(G.total, enemyTotal, `${lvl.name}: enemy count`);
+    assert.strictEqual(G.items.length, ['1', '2', 'a', 'b', 'h', 'k', 'H'].reduce((a, c) => a + (counts[c] || 0), 0), `${lvl.name}: item count`);
+    assert.strictEqual(G.secrets.total, counts['W'] || 0, `${lvl.name}: secret count`);
+  }
+});
+
+test('the exit of every level is reachable from the spawn', () => {
+  for (let i = 0; i < GH.levels.length; i++) {
+    fresh(i, 7);
+    const lvl = GH.levels[i], W = lvl.map[0].length, H = lvl.map.length;
+    const seen = Array.from({ length: H }, () => new Array(W).fill(false));
+    const q = [[Math.floor(G.player.x), Math.floor(G.player.y)]];
+    seen[q[0][1]][q[0][0]] = true;
+    while (q.length) {
+      const [x, y] = q.shift();
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H || seen[ny][nx]) continue;
+        if ('#T'.includes(lvl.map[ny][nx])) continue;
+        seen[ny][nx] = true; q.push([nx, ny]);
+      }
+    }
+    assert.ok(seen[Math.floor(G.exit.y)][Math.floor(G.exit.x)], `${lvl.name}: exit is sealed off`);
+  }
+});
+
+test('a run is reproducible from its seed', () => {
+  const run = seed => {
+    fresh(0, seed);
+    sim(600, { fwd: 1, fire: 1, fireEdge: 1 });
+    return JSON.stringify([G.player.hp, G.player.x.toFixed(6), G.kills, G.stats.shots, G.stats.hits,
+      G.enemies.map(e => e.x.toFixed(4))]);
+  };
+  assert.strictEqual(run(99), run(99), 'same seed must give the same run');
+});
+
+test('pistol fires at its stated cadence', () => {
+  fresh(0, 5);
+  G.player.x = 1.5; G.player.y = 1.5;
+  sim(120, { fire: 1, fireEdge: 1 });            // 2 seconds
+  const expected = Math.floor(2 / GH.weapons[0].rate);
+  assert.ok(G.stats.shots >= expected - 1 && G.stats.shots <= expected + 1,
+    `expected ~${expected} shots in 2s, got ${G.stats.shots}`);
+});
+
+test('an empty gun only clicks', () => {
+  fresh(0, 3);
+  G.player.owns.sg = true; G.player.w = 1; G.player.ammo.sg = 1;
+  G.player.x = 1.5; G.player.y = 1.5; G.player.a = 0;
+  G.enemies.length = 0;                          // nobody to shoot
+  sim(120, { fire: 1, fireEdge: 1 });
+  assert.strictEqual(G.player.ammo.sg, 0, 'the last shell is spent');
+  assert.strictEqual(G.stats.shots, 1, 'only the last shell should fire');
+});
+
+test('armor absorbs half the damage until it is gone', () => {
+  fresh(0, 4);
+  G.player.armor = 10;
+  Game.damagePlayer(20, G.player.x + 3, G.player.y);
+  assert.strictEqual(G.player.armor, 0, 'armor should be depleted');
+  const absorbed = Math.min(10, Math.ceil(20 * GH.tune.armorAbsorb));
+  assert.strictEqual(G.player.hp, GH.tune.maxHp - (20 - absorbed), 'hp takes only the unabsorbed remainder');
+});
+
+test('a closed door blocks movement and sight, an open one does not', () => {
+  fresh(0, 6);
+  const door = G.doors.find(d => !d.push);
+  const cx = door.cx + 0.5, cy = door.cy + 0.5;   // doors sit in a wall line: sight runs along y
+  Game.setDoorOpen(door, 0);
+  assert.ok(Game.isBlocked(cx, cy, GH.tune.playerR), 'closed door must be solid');
+  assert.ok(!Game.hasLOS(cx, cy - 1.5, cx, cy + 1.5), 'closed door blocks sight');
+  Game.setDoorOpen(door, 1);
+  assert.ok(!Game.isBlocked(cx, cy, GH.tune.playerR), 'open door must be passable');
+  assert.ok(Game.hasLOS(cx, cy - 1.5, cx, cy + 1.5), 'open door lets sight through');
+});
+
+test('rays stop at walls', () => {
+  fresh(0, 2);
+  assert.ok(Game.castRay(1.5, 1.5, 1, 0) <= 4, 'ray stops at the first wall');
+  assert.ok(!Game.hasLOS(1.5, 1.5, 1.5, 9.5), 'a wall between two cells blocks sight');
+});
+
+test('gunfire alerts enemies in earshot', () => {
+  fresh(0, 11);
+  const far = G.enemies.find(e => Math.hypot(e.x - G.player.x, e.y - G.player.y) > 8);
+  assert.ok(far, 'the level has a far enemy');
+  assert.strictEqual(far.mode, 'wander');
+  Game.tryFire();
+  assert.strictEqual(far.mode, 'chase', 'gunshot should alarm enemies in earshot');
+});
+
+test('clearing the level opens the exit and stepping on it wins', () => {
+  fresh(0, 8);
+  for (const e of G.enemies) Game.killEnemy(e);
+  assert.strictEqual(G.kills, G.total);
+  assert.ok(G.exit.active, 'exit should activate after the last kill');
+  G.player.x = G.exit.x; G.player.y = G.exit.y;
+  Game.update(DT);
+  assert.strictEqual(G.state, 'win');
+  assert.ok(G.score >= GH.tune.scorePerKill * G.total, 'score should include the kill bonus');
+});
+
+test('lethal damage kills the player', () => {
+  fresh(0, 9);
+  Game.damagePlayer(200, G.player.x + 2, G.player.y);
+  assert.strictEqual(G.player.hp, 0);
+  assert.strictEqual(G.state, 'dead');
+});
+
+test('enemy projectiles explode and hurt the player', () => {
+  fresh(0, 13);
+  G.projs.push({ x: G.player.x + 0.4, y: G.player.y, vx: 0, vy: 0, t: 'shell', dmg: 6, life: 2 });
+  const hp = G.player.hp;
+  sim(2);
+  assert.strictEqual(G.projs.length, 0, 'the projectile should have detonated');
+  assert.ok(G.player.hp < hp, 'the blast should damage the player');
+});
+
+test('the secret pushwall opens once and is counted once', () => {
+  fresh(0, 14);
+  const secret = G.doors.find(d => d.push);
+  G.player.x = secret.cx - 0.4; G.player.y = secret.cy;
+  sim(60);
+  assert.ok(secret.open > 0.5, 'the pushwall should slide open');
+  assert.strictEqual(G.secrets.found, 1);
+  sim(60);
+  assert.strictEqual(G.secrets.found, 1, 'the secret must not be double-counted');
+});
+
+test('the flow field never routes enemies through a pushwall', () => {
+  fresh(0, 15);
+  const secret = G.doors.find(d => d.push);
+  const flow = Game.computeFlow();
+  assert.strictEqual(flow[secret.cy * Game.width() + secret.cx], null, 'the secret wall must not be routable');
+  // ordinary doors are routable - enemies open them while hunting
+  const normal = G.doors.find(d => !d.push);
+  assert.ok(flow[normal.cy * Game.width() + normal.cx] !== null, 'regular doors should be routable');
+});
+
+test('a level can override any tuning value', () => {
+  fresh(1, 1);
+  assert.strictEqual(Game.tune().torchCount, GH.levels[1].tune.torchCount, 'level tuning wins over the base');
+  assert.strictEqual(Game.tune().maxHp, GH.tune.maxHp, 'unspecified values fall back to the base');
+  fresh(0, 1);
+  assert.strictEqual(Game.tune().torchCount, GH.tune.torchCount, 'levels without overrides use the base');
+});
+
+test('nextLevel cycles through the levels', () => {
+  fresh(0, 3);
+  for (let i = 1; i < GH.levels.length; i++) {
+    assert.strictEqual(Game.nextLevel(), i, `level ${i} should follow level ${i - 1}`);
+    assert.strictEqual(G.level, i);
+  }
+  assert.strictEqual(Game.nextLevel(), 0, 'the level list wraps around');
+});
+
+test('overlapping enemies are pushed apart without tunneling walls', () => {
+  fresh(0, 21);
+  const room = G.enemies.slice(0, 6);
+  // jam them into one cell in the middle of an open hall, then let separation work
+  const spot = { x: 5.5, y: 12.5 };
+  for (const e of room) { e.x = spot.x; e.y = spot.y; e.dead = false; }
+  for (let i = 0; i < 100; i++) Game.separateEnemies();
+  for (let i = 0; i < room.length; i++) {
+    for (let j = i + 1; j < room.length; j++) {
+      const d = Math.hypot(room[i].x - room[j].x, room[i].y - room[j].y);
+      assert.ok(d >= (room[i].def.r + room[j].def.r) * 0.95, `enemies ${i} and ${j} are still overlapping`);
+    }
+  }
+  for (const e of room)
+    assert.ok(!Game.isBlocked(e.x, e.y, e.def.r * 0.8), 'separation must not shove enemies into walls');
+});
+
+test('separation is bucketed, so it examines far fewer than every pair', () => {
+  fresh(0, 22);
+  const n = G.enemies.length;
+  const pairs = Game.separateEnemies();
+  assert.ok(pairs < n * (n - 1) / 2, `expected fewer than ${n * (n - 1) / 2} pair checks, got ${pairs}`);
+});
+
+test('death/win panels are timed by the sim clock, not setTimeout', () => {
+  fresh(0, 17);
+  const shown = [];
+  GH.onOverlay = kind => shown.push(kind);
+  Game.damagePlayer(200, G.player.x + 1, G.player.y);
+  assert.strictEqual(G.state, 'dead');
+  assert.strictEqual(G.pendingOverlay, 'dead', 'the panel is queued, not shown yet');
+  const ticks = Math.ceil(GH.tune.overlayDelay / DT);
+  for (let i = 0; i < ticks; i++) Game.update(DT);
+  assert.deepStrictEqual(shown, ['dead'], 'the panel appears once, on schedule');
+  assert.strictEqual(G.pendingOverlay, null);
+  for (let i = 0; i < 60; i++) Game.update(DT);
+  assert.strictEqual(shown.length, 1, 'it must not re-fire');
+});
+
+test('the HUD read-out reflects the sim', () => {
+  fresh(0, 10);
+  const hud = Game.hud();
+  assert.strictEqual(hud.hp, GH.tune.maxHp);
+  assert.strictEqual(hud.gun, GH.weapons[0].name);
+  assert.strictEqual(hud.total, G.total);
+});
