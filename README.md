@@ -64,7 +64,10 @@ Death/win screens show score, time, accuracy (hits/shots) and a rank (HALLMASTER
   stride, an attack-telegraph pose, a muzzle flash, a contact shadow and a collapse on
   death that leaves a sprawled **corpse** (with a blood pool) on the floor. Each figure
   also has a **wounded** sprite — blood streaks, dark wounds, a drained colour — that
-  replaces the clean one once it has taken real damage.
+  replaces the clean one once it has taken real damage. The figures are no longer flat
+  tinted sprites: each one is a billboard shaded as if it were a body, so the nearest
+  torch, the player's glow and a muzzle flash fall across it — the lit side glows, the
+  far side drops to ambient, and the silhouette picks up a warm rim.
 - **Impact decals** — a bullet that misses leaves a crater on the exact wall face it
   struck, oriented by that face's normal, and every shot draws a short tracer along its
   path. A shot that crosses the shallows kicks up a splash.

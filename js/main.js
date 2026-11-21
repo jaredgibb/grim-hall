@@ -638,21 +638,79 @@ const Main = (() => {
     });
     return new THREE.Mesh(geo, mat);
   }
-  // Sprites are flat art, so the scene's lights have to be faked on them: torch
-  // pools, the player's own glow and the muzzle flash all push the tint up.
-  function spriteLight(x, y) {
-    let lit = 0.5;
+  // A figure is a billboard, but it is shaded as if it were a cylinder: the
+  // dominant light direction sweeps across the body, so a torch on the left
+  // lights the left side and the silhouette picks up a rim.
+  let bbGeo = null;
+  function mkBillboard(map, w, h) {
+    if (!bbGeo) bbGeo = new THREE.PlaneGeometry(1, 1);
+    const m = new THREE.Mesh(bbGeo, new THREE.ShaderMaterial({
+      uniforms: {
+        map: { value: map },
+        light: { value: new THREE.Vector3(0, 0, 1) },
+        lit: { value: 0.6 },
+        amb: { value: 0.5 },
+        fill: { value: 0.35 },
+        tint: { value: new THREE.Vector3(1, 1, 1) },
+        alpha: { value: 1 },
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }`,
+      fragmentShader: `
+        uniform sampler2D map;
+        uniform vec3 light;
+        uniform float lit;
+        uniform float amb;
+        uniform float fill;
+        uniform vec3 tint;
+        uniform float alpha;
+        varying vec2 vUv;
+        void main() {
+          vec4 t = texture2D(map, vUv);
+          if (t.a < 0.4) discard;
+          float u = vUv.x * 2.0 - 1.0;
+          vec3 n = normalize(vec3(u, 0.25, 0.9));
+          vec3 l = normalize(light);
+          float ndl = max(dot(n, l), 0.0);
+          float wrap = max(dot(n, -l), 0.0) * 0.4;   // a light behind the body still wraps around it
+          float face = max(dot(n, vec3(0.0, 0.0, 1.0)), 0.0);
+          float rim = 1.0 - face;
+          vec3 col = t.rgb * (amb + (ndl + wrap) * lit + face * fill) * tint;
+          col += vec3(1.0, 0.82, 0.55) * rim * rim * lit * 0.22;
+          gl_FragColor = vec4(col, t.a * alpha);
+        }`,
+    }));
+    m.scale.set(w, h, 1);
+    return m;
+  }
+  // torch pools, the player's own glow and the muzzle flash all push light onto a
+  // figure; this is the sum of them, in the billboard's own frame
+  function lightDirAt(x, y, yaw) {
+    let lx = 0, ly = 0, sum = 0;
+    const add = (dx, dy, w) => {
+      const d = Math.hypot(dx, dy) || 1e-6;
+      lx += dx / d * w; ly += dy / d * w; sum += w;
+    };
     for (const l of torches) {
       const d = Math.hypot(l.position.x - x, l.position.z - y);
-      if (d < 7) lit += l.intensity * (1 - d / 7) * 0.55;
+      if (d < 7) add(l.position.x - x, l.position.z - y, l.intensity * (1 - d / 7) * 0.55);
     }
     const dp = Math.hypot(camera.position.x - x, camera.position.z - y);
-    if (dp < 8) lit += 0.3 * (1 - dp / 8);
+    if (dp < 8) add(camera.position.x - x, camera.position.z - y, 0.3 * (1 - dp / 8));
     if (muzzleLight.intensity > 0) {
       const dm = Math.hypot(muzzleLight.position.x - x, muzzleLight.position.z - y);
-      if (dm < 12) lit += muzzleLight.intensity * (1 - dm / 12) * 0.9;
+      if (dm < 12) add(muzzleLight.position.x - x, muzzleLight.position.z - y, muzzleLight.intensity * (1 - dm / 12) * 0.9);
     }
-    return Math.min(1.4, lit);
+    // world XZ -> local: the quad's normal is (sin yaw, 0, cos yaw)
+    const cx = Math.cos(yaw), sx = Math.sin(yaw);
+    return {
+      dir: new THREE.Vector3(lx * cx - ly * sx, 0.2, Math.max(lx * sx + ly * cx, 0.05)),
+      int: Math.max(0, Math.min(0.9, sum)),
+    };
   }
   // a flat quad on the floor under a billboard, so the figure is not floating
   let shadowGeo = null;
@@ -687,7 +745,7 @@ const Main = (() => {
       const asp = ART.sprAsp[e.t] || 0.92;   // each figure is painted at its own aspect
       if (!o) {
         const grp = new THREE.Group();
-        const s = mkSprite(ART.spr[e.t].f[0].walk, e.def.h * asp, e.def.h);
+        const s = mkBillboard(ART.spr[e.t].f[0].walk, e.def.h * asp, e.def.h);
         s.position.y = e.def.h / 2;
         grp.add(s);
         // muzzle flash rides on the figure so a shot has a visible origin
@@ -715,12 +773,16 @@ const Main = (() => {
       const set = (e.tele > 0 || e.charging > 0) ? ART.spr[e.t][view].atk : ART.spr[e.t][view][fr];
       // a figure that has taken real damage shows its wounds until the hit flash
       // washes the whole sprite white for a frame
-      o.spr.material.map = e.flash > 0 ? set.flash : (WOUND_ON && Game.wounded(e) ? set.hurt : set.walk);
-      const lit = spriteLight(e.x, e.y);
+      const yaw = Math.atan2(camera.position.x - e.x, camera.position.z - e.y);
+      o.spr.rotation.y = yaw;
+      const u = o.spr.material.uniforms;
+      u.map.value = e.flash > 0 ? set.flash : (WOUND_ON && Game.wounded(e) ? set.hurt : set.walk);
+      const L = lightDirAt(e.x, e.y, yaw);
+      u.light.value.copy(L.dir);
+      u.lit.value = L.int;
       // a wading figure is soaked: cooled, darkened, and cut off at the waterline
-      if (wet) o.spr.material.color.setRGB(lit * 0.78, lit * 0.86, lit * 1.02);
-      else o.spr.material.color.setScalar(lit);
-      o.spr.scale.set(e.def.h * asp, e.def.h, 1);
+      if (wet) u.tint.value.set(0.78, 0.86, 1.02);
+      else u.tint.value.set(1, 1, 1);
       // the flash blooms for a beat after the shot, aimed at the player
       const mk = e.dead ? 0 : Math.max(0, e.mz || 0) / 0.16;
       o.muzzle.material.opacity = mk * 0.85;
@@ -731,13 +793,12 @@ const Main = (() => {
         const k = 1 - Math.max(0, e.deadT) / 0.6; // 0..1
         o.grp.rotation.x = -k * Math.PI / 2 * 0.92;
         o.grp.position.y = -k * 0.12;
-        o.spr.material.opacity = 1 - k * k;
-        o.spr.material.transparent = true;
+        o.spr.material.uniforms.alpha.value = 1 - k * k;
         o.shadow.scale.set(e.def.h * asp * 1.25 * (0.4 + k * 0.6), e.def.h * 0.6 * (0.4 + k * 0.6), 1);
         o.shadow.material.opacity = 0.55 * (0.35 + k * 0.65);
       } else {
         o.grp.rotation.x = 0; o.grp.position.y = -sink;
-        o.spr.material.opacity = 1;
+        o.spr.material.uniforms.alpha.value = 1;
         o.shadow.material.opacity = wet ? 0.3 : 0.55;
         if (wet) o.shadow.scale.set(e.def.h * asp * 1.55, e.def.h * 0.78, 1);
         else o.shadow.scale.set(e.def.h * asp * 1.25, e.def.h * 0.6, 1);

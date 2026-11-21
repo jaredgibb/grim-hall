@@ -30,6 +30,18 @@ test('art, audio and game all attach themselves to the GH namespace', () => {
   assert.ok(typeof GH.game.grid === 'function', 'GH.game.grid missing (renderer needs it)');
 });
 
+test('every uniform the renderer writes on a figure is declared on its material', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'js/main.js'), 'utf8');
+  const mk = src.slice(src.indexOf('function mkBillboard'), src.indexOf('function lightDirAt'));
+  const declared = new Set([...mk.matchAll(/(\w+): \{ value: /g)].map(m => m[1]));
+  assert.ok(declared.size > 0, 'the figure material declares no uniforms');
+  const sync = src.slice(src.indexOf('function syncEntities'), src.indexOf('// items'));
+  const written = new Set([...sync.matchAll(/(?:\bu\.|spr\.material\.uniforms\.)(\w+)\.value/g)].map(m => m[1]));
+  assert.ok(written.size > 0, 'syncEntities writes no figure uniforms');
+  for (const name of written)
+    assert.ok(declared.has(name), `the renderer writes uniform ${name}, which the figure material never declares`);
+});
+
 test('main.js boots with only THREE + GH in scope', () => {
   const GH = require('../js/data.js');
   require('../js/art.js');
