@@ -9,7 +9,7 @@ const Main = (() => {
   const G = Game.G;                              // live sim state
   const TAU = NS.tau, WEAPONS = NS.weapons, LEVELS = NS.levels;
   let renderer, scene, camera, ART;
-  let worldGroup = null, doorMeshes = [], enemyObjs = new Map(), itemObjs = new Map(), projObjs = new Map(), fxObjs = new Map();
+  let worldGroup = null, doorMeshes = [], enemyObjs = new Map(), itemObjs = new Map(), projObjs = new Map(), fxObjs = new Map(), corpseObjs = new Map();
   let weaponMesh, flashMesh, muzzleLight, muzzlePos, exitMesh, exitLight, flashLight, eFlash;
   let torches = [], flames = [], cones = [], embers = [], coneGeo = null;
   let msgDiv, lastMini = 0, popDiv, popUntil = 0, lastKills = 0, dmgDiv;
@@ -121,9 +121,9 @@ const Main = (() => {
     const pbrMat = (set, rough, metal) => new THREE.MeshStandardMaterial({
       map: set.map, normalMap: set.normal, roughnessMap: set.rough,
       roughness: rough, metalness: metal,
-      // slag-veined themes (forge, magma) carry an emissive map, so the walls
-      // glow in the dark instead of depending on a torch being nearby
-      emissive: set.emi && glowOn ? 0xff6a22 : 0x000000,
+      // slag-veined themes (forge, magma, glass, onyx) carry an emissive map, so
+      // the walls glow in the dark instead of depending on a torch being nearby
+      emissive: set.emi && glowOn ? new THREE.Color(set.glow) : 0x000000,
       emissiveMap: set.emi && glowOn ? set.emi : null,
       emissiveIntensity: set.emi && glowOn ? 1.15 : 0,
     });
@@ -525,7 +525,21 @@ const Main = (() => {
   function syncEntities(dt, t) {
     // enemies
     for (const e of G.enemies) {
-      if (e.dead && e.deadT <= 0) continue;   // corpse already faded out
+      if (e.dead && e.deadT <= 0) {
+        // the collapse finished: the billboard is gone and the body stays on the
+        // floor as a sprawled decal
+        const gone = enemyObjs.get(e);
+        if (gone) { scene.remove(gone.grp); scene.remove(gone.shadow); enemyObjs.delete(e); }
+        if (!corpseObjs.has(e)) {
+          const m = new THREE.Mesh(new THREE.PlaneGeometry(e.def.h * 1.05, e.def.h * 0.62),
+            new THREE.MeshStandardMaterial({ map: ART.corpses[e.t], transparent: true, roughness: 0.9, metalness: 0, depthWrite: false }));
+          m.rotation.x = -Math.PI / 2;
+          m.rotation.z = e.a + (e.x * 7.31 % 1) * 0.9;
+          m.position.set(e.x, 0.014, e.y);
+          scene.add(m); corpseObjs.set(e, m);
+        }
+        continue;
+      }
       let o = enemyObjs.get(e);
       const asp = ART.sprAsp[e.t] || 0.92;   // each figure is painted at its own aspect
       if (!o) {
@@ -571,7 +585,6 @@ const Main = (() => {
         o.spr.material.transparent = true;
         o.shadow.scale.set(e.def.h * asp * 1.25 * (0.4 + k * 0.6), e.def.h * 0.6 * (0.4 + k * 0.6), 1);
         o.shadow.material.opacity = 0.55 * (0.35 + k * 0.65);
-        if (e.deadT <= 0) { scene.remove(o.grp); scene.remove(o.shadow); enemyObjs.delete(e); }
       } else {
         o.grp.rotation.x = 0; o.grp.position.y = 0;
         o.spr.material.opacity = 1;
@@ -627,6 +640,15 @@ const Main = (() => {
           m.position.set(f.x, 0.012, f.y);
           scene.add(m);
           o = { f, line: m };
+        } else if (f.kind === 'hole') {
+          // a bullet that missed lands in the masonry: a decal on the exact face
+          // the ray struck, oriented by the face normal
+          const m = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.34),
+            new THREE.MeshBasicMaterial({ map: ART.hole, transparent: true, depthWrite: false }));
+          m.position.set(f.x + f.nx * 0.03, 0.62, f.y + f.ny * 0.03);
+          m.rotation.y = Math.atan2(f.nx, f.ny);
+          scene.add(m);
+          o = { f, decal: m };
         } else if (f.kind === 'msg') {
           msgDiv.textContent = f.text;
           msgDiv.style.opacity = 1;
@@ -638,6 +660,7 @@ const Main = (() => {
       if (o.spr) { const sc = f.kind === 'boom' ? 0.4 + k * 1.8 : f.kind === 'blood' ? 0.3 + k * 0.55 : 0.18; o.spr.scale.set(sc, sc, 1); if (f.kind === 'boom') o.spr.material.map = ART.boom[Math.min(3, Math.floor(k * 4))]; o.spr.material.opacity = 1 - k * 0.6; }
       if (o.line && f.kind === 'tracer') o.line.material.opacity = 1 - k;
       if (o.line && f.kind === 'splat') o.line.material.opacity = f.t < 3 ? Math.max(0, f.t / 3) : 1;
+      if (o.decal) o.decal.material.opacity = f.t < 2.5 ? f.t / 2.5 : 1;
       if (f.kind === 'msg' && k > 0.8) msgDiv.style.opacity = 1 - (k - 0.8) * 5;
     }
     const live = new Set(G.fx);
@@ -645,6 +668,7 @@ const Main = (() => {
       if (live.has(f)) continue;
       if (o.spr) scene.remove(o.spr);
       if (o.line) scene.remove(o.line);
+      if (o.decal) scene.remove(o.decal);
       fxObjs.delete(f);
     }
   }
@@ -739,9 +763,11 @@ const Main = (() => {
   }
   function clearEntities() {
     for (const [, o] of enemyObjs) { scene.remove(o.grp); if (o.shadow) scene.remove(o.shadow); }
+    for (const m of corpseObjs.values()) scene.remove(m);
+    corpseObjs.clear();
     for (const [, o] of itemObjs) scene.remove(o);
     for (const [, o] of projObjs) scene.remove(o);
-    for (const [, o] of fxObjs) { if (o.spr) scene.remove(o.spr); if (o.line) scene.remove(o.line); }
+    for (const [, o] of fxObjs) { if (o.spr) scene.remove(o.spr); if (o.line) scene.remove(o.line); if (o.decal) scene.remove(o.decal); }
     enemyObjs.clear(); itemObjs.clear(); projObjs.clear(); fxObjs.clear();
   }
   function startGame() {

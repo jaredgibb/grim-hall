@@ -240,6 +240,48 @@ test('a firing enemy lights a muzzle flash that decays', () => {
   assert.ok(e.mz <= 0, 'the flash must fade, not linger');
 });
 
+test('rayHit reports the wall cell and the face the ray entered', () => {
+  fresh(0, 5);
+  const hit = Game.rayHit(5.5, 12.5, -1, 0);
+  assert.strictEqual(hit.cx, 0, 'the ray ends in the outer wall cell');
+  assert.strictEqual(hit.cy, 12);
+  assert.strictEqual(hit.nx, 1, 'the face it entered points back east');
+  assert.ok(Math.abs(hit.d - 4.5) < 1e-9, `distance should be 4.5, got ${hit.d}`);
+});
+
+test('a shot into a wall leaves a bullet hole on the face it struck', () => {
+  fresh(0, 5);
+  const p = G.player;
+  p.x = 5.5; p.y = 12.5; p.a = Math.PI;   // due west, straight into the outer wall
+  p.fireCd = 0;
+  Game.tryFire();
+  const hole = G.fx.find(f => f.kind === 'hole');
+  assert.ok(hole, 'the missed shot should leave a crater');
+  assert.ok(Math.abs(hole.nx) + Math.abs(hole.ny) === 1, 'the decal needs a unit face normal');
+  assert.ok(Math.abs(hole.x - 1.03) < 1e-6 && hole.nx === 1, `crater at ${hole.x} facing ${hole.nx}`);
+});
+
+test('a bullet that hits a shut door puts the crater on the door plane', () => {
+  fresh(0, 11);
+  const p = G.player;
+  p.x = 3.5; p.y = 5.5; p.a = -Math.PI / 2;   // due north, straight at the shut door
+  p.fireCd = 0;
+  Game.tryFire();
+  const hole = G.fx.find(f => f.kind === 'hole');
+  assert.ok(hole, 'the door should take the hit');
+  assert.ok(Math.abs(hole.y - 4.53) < 1e-6, `crater should sit on the door plane, got y=${hole.y}`);
+  assert.strictEqual(hole.ny, 1, 'the face points back at the shooter');
+});
+
+test('bullet holes are capped so a long firefight cannot grow meshes forever', () => {
+  fresh(0, 5);
+  const p = G.player;
+  p.x = 5.5; p.y = 12.5; p.a = Math.PI;
+  for (let i = 0; i < 60; i++) { p.fireCd = 0; Game.tryFire(); }
+  const holes = G.fx.filter(f => f.kind === 'hole');
+  assert.ok(holes.length <= 40, `expected at most 40 holes, got ${holes.length}`);
+});
+
 test('the HUD read-out reflects the sim', () => {
   fresh(0, 10);
   const hud = Game.hud();

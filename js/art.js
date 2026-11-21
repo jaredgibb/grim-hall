@@ -85,6 +85,11 @@
                drip: 'rgba(240,120,50,0.22)', glow: '#ff8a3a' },
     spire:   { brick: [44, 52, 48], mortar: [18, 22, 22], metal: [60, 70, 66], accent: '#3f8a72',
                drip: 'rgba(150,200,180,0.16)' },
+    // glass: pale quartz with luminous crystal veins; onyx: black polished stone
+    glass:   { brick: [68, 76, 90], mortar: [24, 28, 36], metal: [104, 118, 132], accent: '#9fc6d8',
+               drip: 'rgba(206,226,238,0.16)', glow: '#7fd6e4', halo: 'rgba(150,200,230,0.5)' },
+    onyx:    { brick: [32, 31, 36], mortar: [14, 14, 16], metal: [54, 52, 58], accent: '#c9a24a',
+               drip: 'rgba(201,162,74,0.12)', glow: '#e8c05a', halo: 'rgba(230,190,110,0.5)' },
   };
   function mkSet() {
     const a = mkc(TS, TS), h = mkc(TS, TS), r = mkc(TS, TS), e = mkc(TS, TS);
@@ -120,6 +125,7 @@
       normal: tex(normalMap(set.h, 2.6), rep, key + '#n'),
       rough: tex(set.r, rep, key + '#r'),
       emi: set.glow ? tex(set.e, rep, key + '#e') : null,
+      glow: set.glowColor || null,
     };
   }
 
@@ -127,6 +133,7 @@
     const s = mkSet(), g = s.g, hg = s.hg, rg = s.rg;
     const pal = THEMES[theme] || THEMES.hall;
     s.glow = !!pal.glow;
+    s.glowColor = pal.glow || null;
     const bh = 16, bw = 32;
     g.fillStyle = 'rgb(' + pal.mortar.join(',') + ')'; g.fillRect(0, 0, TS, TS);
     hg.fillStyle = '#202020'; hg.fillRect(0, 0, TS, TS);   // mortar sits low
@@ -168,7 +175,7 @@
         const pts = [[x, y]];
         for (let k = 0; k < 7; k++) { x += rnd() * 14 - 7; y += 8 + rnd() * 12; pts.push([x, y]); }
         const trace = c => { c.beginPath(); c.moveTo(pts[0][0], pts[0][1]); for (const p of pts) c.lineTo(p[0], p[1]); };
-        trace(g); g.strokeStyle = 'rgba(255,150,60,0.55)'; g.lineWidth = 7; g.stroke();
+        trace(g); g.strokeStyle = pal.halo || 'rgba(255,150,60,0.55)'; g.lineWidth = 7; g.stroke();
         g.strokeStyle = pal.glow; g.lineWidth = 3; g.stroke();
         trace(s.eg); s.eg.strokeStyle = 'rgba(255,255,255,0.9)'; s.eg.lineWidth = 3; s.eg.stroke();
         trace(rg); rg.strokeStyle = 'rgba(60,60,60,0.8)'; rg.lineWidth = 3; rg.stroke();   // slag is smooth
@@ -1044,6 +1051,46 @@
     px(g, 2, 14, 60, 3, '#2a2e36'); px(g, 2, 47, 60, 3, '#2a2e36');
     return c;
   }
+  // bullet impact: a ragged crater with a dust halo and radial cracks, drawn on a
+  // transparent field so it reads as a decal stuck on the wall it hit
+  function bulletHole() {
+    const c = mkc(64, 64), g = c.getContext('2d');
+    g.fillStyle = 'rgba(150,140,128,0.22)';
+    for (let i = 0; i < 22; i++) {
+      const a = rnd() * TAU, r = 8 + rnd() * 14;
+      g.beginPath(); g.arc(32 + Math.cos(a) * r, 32 + Math.sin(a) * r, 1 + rnd() * 3, 0, 7); g.fill();
+    }
+    g.strokeStyle = 'rgba(0,0,0,0.45)'; g.lineWidth = 1.5;
+    for (let i = 0; i < 6; i++) {
+      const a = rnd() * TAU;
+      g.beginPath(); g.moveTo(32 + Math.cos(a) * 6, 32 + Math.sin(a) * 6);
+      g.lineTo(32 + Math.cos(a) * (14 + rnd() * 10), 32 + Math.sin(a) * (14 + rnd() * 10));
+      g.stroke();
+    }
+    g.fillStyle = 'rgba(46,42,38,0.85)';
+    g.beginPath(); g.arc(32, 32, 9, 0, 7); g.fill();
+    g.fillStyle = 'rgba(12,10,9,0.95)';
+    g.beginPath(); g.arc(32, 32, 5 + rnd() * 2, 0, 7); g.fill();
+    g.fillStyle = 'rgba(190,180,165,0.35)';
+    g.beginPath(); g.arc(32 - 2, 30, 2, 0, 7); g.fill();   // chipped edge catching the light
+    return c;
+  }
+  // a fallen enemy seen from above: sprawled limbs in its own colours over a
+  // blood pool, so kills leave something on the floor instead of vanishing
+  function corpseArt(pal) {
+    const c = mkc(64, 64), g = c.getContext('2d');
+    const blob = (x, y, rx, ry, a, col) => {
+      g.fillStyle = col; g.beginPath(); g.ellipse(x, y, rx, ry, a, 0, 7); g.fill();
+    };
+    blob(32, 32, 27, 21, 0, 'rgba(86,12,12,0.5)');
+    blob(28, 34, 18, 12, 0.4, 'rgba(56,6,6,0.6)');
+    blob(14, 26, 11, 4, -0.25, pal.cloth); blob(14, 38, 11, 4, 0.3, pal.cloth);   // legs
+    blob(34, 14, 10, 3.5, -0.7, pal.skin); blob(30, 50, 10, 3.5, 0.8, pal.skin);  // arms
+    blob(32, 32, 13, 8, 0, pal.cloth); blob(32, 32, 9, 5, 0, pal.accent);          // torso
+    blob(46, 32, 6, 5, 0, pal.skin); blob(46, 32, 4, 3, 0, pal.hat);               // head
+    noise(g, 64, 64, 60, 0.04, 0.14, 2);
+    return c;
+  }
   // ---- build all ----
   // one palette per enemy type; bulk scales the body, helm/horns are the silhouette.
   // Sprite size is the figure's own bounding box, so the billboard never squashes it.
@@ -1090,6 +1137,7 @@
         [t, enemySprites(ENEMY_PAL[t], ENEMY_SPR[t][0], ENEMY_SPR[t][1], t)])),
       // sprite quads must match each figure's own aspect or the body is squashed
       sprAsp: Object.fromEntries(Object.entries(ENEMY_SPR).map(([t, [w, h]]) => [t, w / h])),
+      corpses: Object.fromEntries(Object.keys(ENEMY_PAL).map(t => [t, tex(corpseArt(ENEMY_PAL[t]), false, 'corpse' + t)])),
       items: { i1: tex(itemGun('sg'), false, 'i1'), i2: tex(itemGun('mg'), false, 'i2'), ia: tex(itemBox('sg'), false, 'ia'),
         ib: tex(itemBox('mg'), false, 'ib'), ih: tex(itemHealth(false), false, 'ih'), iH: tex(itemHealth(true), false, 'iH'),
         ik: tex(itemArmor(), false, 'ik') },
@@ -1107,6 +1155,7 @@
       proj: { shell: tex(pr.shell, false, 'shell'), bomb: tex(pr.bomb, false, 'bomb') },
       decor: { poster: texTex.poster, skull: texTex.skull, pipes: texTex.pipes },
       blood: tex(bloodPuff(), false, 'blood'), splat: tex(bloodSplat(), false, 'splat'),
+      hole: tex(bulletHole(), false, 'hole'),
       shadow: tex(shadowBlob(), false, 'shadow'),
       ceilLight: texTex.ceilLight,
     };

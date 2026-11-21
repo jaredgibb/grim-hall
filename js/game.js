@@ -98,19 +98,21 @@
       }
     }
   }
-  // DDA grid raycast; returns distance along the normalised direction (rdx, rdy)
-  function castRay(x, y, rdx, rdy) {
+  // DDA grid raycast. rayHit returns the distance plus the wall cell and the face
+  // normal it struck (needed for bullet decals); castRay is the distance-only form.
+  function rayHit(x, y, rdx, rdy) {
     let mx = Math.floor(x), my = Math.floor(y);
     const ddx = Math.abs(1 / (rdx || 1e-9)), ddy = Math.abs(1 / (rdy || 1e-9));
     const sx = rdx < 0 ? -1 : 1, sy = rdy < 0 ? -1 : 1;
     let tdx = (rdx < 0 ? (x - mx) : (mx + 1 - x)) * ddx;
     let tdy = (rdy < 0 ? (y - my) : (my + 1 - y)) * ddy;
     for (let i = 0; i < 64; i++) {
-      if (tdx < tdy) { mx += sx; tdx += ddx; if (cellSolid(mx, my)) return tdx - ddx; }
-      else { my += sy; tdy += ddy; if (cellSolid(mx, my)) return tdy - ddy; }
+      if (tdx < tdy) { mx += sx; tdx += ddx; if (cellSolid(mx, my)) return { d: tdx - ddx, cx: mx, cy: my, nx: -sx, ny: 0 }; }
+      else { my += sy; tdy += ddy; if (cellSolid(mx, my)) return { d: tdy - ddy, cx: mx, cy: my, nx: 0, ny: -sy }; }
     }
-    return 64;
+    return { d: 64, cx: mx, cy: my, nx: 0, ny: 0 };
   }
+  function castRay(x, y, rdx, rdy) { return rayHit(x, y, rdx, rdy).d; }
   function hasLOS(x0, y0, x1, y1) {
     const dx = x1 - x0, dy = y1 - y0, d = Math.hypot(dx, dy) || 0.001;
     if (d < 0.05) return true;
@@ -270,8 +272,8 @@
     if (p.w === 1) AUDIO.pump(0.22);            // pump action, offset in the audio layer
     const shoot = ang => {
       const rdx = Math.cos(ang), rdy = Math.sin(ang);
-      const wl = castRay(p.x, p.y, rdx, rdy);
-      let best = null, bd = wl;
+      const hit = rayHit(p.x, p.y, rdx, rdy);
+      let best = null, bd = hit.d;
       for (const e of G.enemies) {
         if (e.dead) continue;
         const dx = e.x - p.x, dy = e.y - p.y;
@@ -285,6 +287,16 @@
         G.fx.push({ kind: 'blood', x: best.x + (rng() - 0.5) * 0.4, y: best.y + (rng() - 0.5) * 0.4, t: 0.25, max: 0.25 });
         G.hitT = 0.12;
         if (best.hp <= 0) killEnemy(best);
+      } else {
+        // the bullet ended in masonry: leave a crater on the face it struck. A door
+        // is a thin plane in the middle of its cell, so the crater goes on that plane
+        // rather than on the cell boundary the ray stopped at.
+        const dr = doorAt[hit.cy * W + hit.cx];
+        const hx = (dr ? hit.cx + 0.5 : p.x + rdx * hit.d) + hit.nx * 0.03;
+        const hy = (dr ? hit.cy + 0.5 : p.y + rdy * hit.d) + hit.ny * 0.03;
+        const holes = G.fx.filter(f => f.kind === 'hole');
+        if (holes.length >= 40) G.fx.splice(G.fx.indexOf(holes[0]), 1);
+        G.fx.push({ kind: 'hole', x: hx, y: hy, nx: hit.nx, ny: hit.ny, t: 14, max: 14 });
       }
       G.fx.push({ kind: 'spark', x: p.x + rdx * Math.min(bd, 6), y: p.y + rdy * Math.min(bd, 6), t: 0.08, max: 0.08 });
     };
@@ -547,7 +559,7 @@
     G, NS,
     tune: () => TUNE,
     buildWorld, update, tryFire, damagePlayer, killEnemy, explode, computeFlow,
-    castRay, hasLOS, isBlocked, cell, cellSolid, doorAt, torchCells, setDoorOpen,
+    castRay, rayHit, hasLOS, isBlocked, cell, cellSolid, doorAt, torchCells, setDoorOpen,
     moveEnt, collidePlayer, separateEnemies, makeRng,
     width: () => W, height: () => H, grid: () => grid,
     levelCount: () => NS.levels.length,
