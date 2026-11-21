@@ -345,6 +345,22 @@ test('wading has its own sounds', () => {
   assert.ok(typeof GH.sound.splash === 'function', 'breaking the surface has a splash');
 });
 
+test('a shot that lands in the shallows leaves a tracer and a splash', () => {
+  fresh(16, 31);
+  const lvl = GH.levels[16], W = lvl.map[0].length;
+  let spot = null;
+  for (let y = 1; y < lvl.map.length - 1 && !spot; y++)
+    for (let x = 1; x < W - 2; x++)
+      if (lvl.map[y][x] === '.' && lvl.map[y][x + 1] === 'w') { spot = [x, y]; break; }
+  assert.ok(spot, 'the sunken navy has dry ground beside the water');
+  const p = G.player;
+  p.x = spot[0] + 0.5; p.y = spot[1] + 0.5; p.a = 0;
+  G.fx.length = 0;
+  sim(2, { fire: 1, fireEdge: 1 });
+  assert.ok(G.fx.some(f => f.kind === 'tracer'), 'the bullet drew a tracer');
+  assert.ok(G.fx.some(f => f.kind === 'splash'), 'the shot kicked the water up');
+});
+
 test('a wounded enemy limps, a healthy one does not', () => {
   const run = hp => {
     fresh(0, 41);

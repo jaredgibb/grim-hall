@@ -267,6 +267,7 @@
 
   function explode(x, y) {
     G.fx.push({ kind: 'boom', x, y, t: 0.32, max: 0.32 });
+    if (inWater(x, y) && G.fx.length < 140) G.fx.push({ kind: 'splash', x, y, t: 0.6, max: 0.6 });
     const p = G.player, d = Math.hypot(p.x - x, p.y - y);
     AUDIO.boom(d);
     if (d < TUNE.boomRadius && hasLOS(x, y, p.x, p.y))
@@ -316,6 +317,20 @@
         G.fx.push({ kind: 'hole', x: hx, y: hy, nx: hit.nx, ny: hit.ny, t: 14, max: 14 });
       }
       G.fx.push({ kind: 'spark', x: p.x + rdx * Math.min(bd, 6), y: p.y + rdy * Math.min(bd, 6), t: 0.08, max: 0.08 });
+      // the bullet's path, and a kick-up if it actually crossed the shallows
+      const ex = p.x + rdx * bd, ey = p.y + rdy * bd;
+      let wx = 0, wy = 0, wet = false;
+      for (let s = 0.3; s <= bd; s += 0.3) {
+        const sx = p.x + rdx * s, sy = p.y + rdy * s;
+        if (inWater(sx, sy)) { wx = sx; wy = sy; wet = true; break; }
+      }
+      if (G.fx.length < 140) {
+        G.fx.push({ kind: 'tracer', x0: p.x + rdx * 0.4, y0: p.y + rdy * 0.4, x1: ex, y1: ey, h: 0.55, t: 0.07, max: 0.07 });
+        if (wet) {
+          AUDIO.splash();
+          G.fx.push({ kind: 'splash', x: wx, y: wy, t: 0.5, max: 0.5 });
+        }
+      }
     };
     for (let i = 0; i < w.pellets; i++)
       shoot(p.a + (i - (w.pellets - 1) / 2) * w.spread + (rng() - 0.5) * 0.012);

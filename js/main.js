@@ -778,8 +778,9 @@ const Main = (() => {
           o.spr.position.set(f.x, 0.9, f.y);
           scene.add(o.spr);
         } else if (f.kind === 'tracer') {
-          const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(f.x0, 1.0, f.y0), new THREE.Vector3(f.x1, 1.0, f.y1)]);
-          o = { f, line: new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0xffcc66, transparent: true })) };
+          const h = f.h || 1.0;
+          const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(f.x0, h, f.y0), new THREE.Vector3(f.x1, h, f.y1)]);
+          o = { f, line: new THREE.Line(g, new THREE.LineBasicMaterial({ color: f.h ? 0xffe0a0 : 0xffcc66, transparent: true })) };
           scene.add(o.line);
         } else if (f.kind === 'blood') {
           o = { f, spr: mkSprite(ART.blood, 0.35, 0.35) };

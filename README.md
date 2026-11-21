@@ -1,6 +1,6 @@
 # GRIM HALL
 
-A Wolfenstein 3D-style retro FPS. Sixteen levels, 3 guns, 4 enemy types, 100% procedural
+A Wolfenstein 3D-style retro FPS. Seventeen levels, 3 guns, 4 enemy types, 100% procedural
 art and audio (no external assets — the only vendored file is the Three.js engine).
 
 ## Run it
@@ -66,7 +66,8 @@ Death/win screens show score, time, accuracy (hits/shots) and a rank (HALLMASTER
   also has a **wounded** sprite — blood streaks, dark wounds, a drained colour — that
   replaces the clean one once it has taken real damage.
 - **Impact decals** — a bullet that misses leaves a crater on the exact wall face it
-  struck, oriented by that face's normal.
+  struck, oriented by that face's normal, and every shot draws a short tracer along its
+  path. A shot that crosses the shallows kicks up a splash.
 
 ## Debug switches
 `?auto=1` skips the title screen and drops pointer lock, `?tp=x,y,angle` teleports,
