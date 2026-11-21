@@ -11,7 +11,7 @@ const Main = (() => {
   let renderer, scene, camera, ART;
   let worldGroup = null, doorMeshes = [], enemyObjs = new Map(), itemObjs = new Map(), projObjs = new Map(), fxObjs = new Map(), corpseObjs = new Map();
   let waterMesh = null;
-  let weaponMesh, flashMesh, muzzleLight, muzzlePos, exitMesh, exitLight, flashLight, eFlash;
+  let guns, gunLight, flashMesh, muzzleLight, muzzlePos, exitMesh, exitLight, flashLight, eFlash;
   let torches = [], flames = [], cones = [], embers = [], coneGeo = null;
   let msgDiv, lastMini = 0, popDiv, popUntil = 0, lastKills = 0, dmgDiv;
   const Input = { fwd: 0, back: 0, left: 0, right: 0, turn: 0, fire: 0, fireEdge: 0, wantW: -1, sprint: 0 };
@@ -40,7 +40,6 @@ const Main = (() => {
     eFlash = new THREE.PointLight(0xffaa40, 0, 7, 2); scene.add(eFlash);
     Game.buildWorld(G.level);
     buildWorldMeshes();
-    buildWeapon();
     POST.on = !location.search.includes('post=0');   // ?post=0 is the A/B switch
     buildPost();
     applyGrade();
@@ -229,6 +228,7 @@ const Main = (() => {
       worldGroup.add(m);
       placed++;
     }
+    buildWeapon();   // the guns are rebuilt with each level's theme metal/wood
   }
   function syncExit() {
     exitMesh.position.set(G.exit.x, 1.1, G.exit.y);
@@ -241,25 +241,167 @@ const Main = (() => {
   // instead of being sawn off in mid-air, and its bottom edge sits exactly on the
   // HUD line. Both anchors follow fov (which punches up on recoil), so the whole
   // gun - barrel, grip, trigger guard and hand - stays on screen.
-  const VIEW = { w: 0.50, h: 0.375, z: -0.5 };
+  const VIEW = { w: 0.62, h: 0.24, z: -0.5 };
   const HUD_FRAC = 0.2;                    // HUD bar = canvasWidth/8 = 20% of canvas height
   function viewAnchor() {
     const halfH = Math.tan(camera.fov * Math.PI / 360) * -VIEW.z;
     const halfW = halfH * (VW / VH);
     return { x: halfW - VIEW.w / 2, y: -halfH + HUD_FRAC * 2 * halfH + VIEW.h / 2 };
   }
+  // ---- viewmodel guns ----
+  // Real geometry instead of a painted quad: a bored barrel, a forged slide, a
+  // carved stock, a gloved hand. Because they are solid objects in the scene, the
+  // hall lights them — a torch on the left catches the flank of the steel, and the
+  // muzzle flash lights the gun itself for the shot.
+  const GUN_YAW = 1.12;                   // the gun is held across the body, muzzle up-left
+  const GUN_TILT = 0.12;
+  const FWD = Math.PI / 2;                // tips a cylinder's +Y axis onto the forward (-Z) axis
+  const cyl = (r, h, s = 20) => new THREE.CylinderGeometry(r, r, h, s);
+  const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
+  // scratch objects for the muzzle-flash billboard; built lazily so the boot test
+  // can load main.js against a stubbed THREE
+  let UNIT_Y = null, ROLLQ = null;
+
+  function gunTex(t, rep) {
+    // the masonry maps are cut for a 1 m wall; a gun is a hand's width, so tile
+    // them a few times across each face to get machined grain instead of bricks
+    const out = {};
+    for (const k of ['map', 'normal', 'rough']) {
+      const c = t[k].clone();
+      c.repeat = rep;
+      out[k] = c;
+    }
+    return out;
+  }
+
+  function gunMaterials() {
+    const m = gunTex(ART.tex.metal, 6), w = gunTex(ART.tex.plank, 3);
+    const steel = new THREE.MeshStandardMaterial({ map: m.map, normalMap: m.normal, roughnessMap: m.rough,
+      color: 0x9aa4ae, metalness: 0.55, roughness: 0.32, depthTest: false, depthWrite: false });
+    const dark = new THREE.MeshStandardMaterial({ map: m.map, normalMap: m.normal, roughnessMap: m.rough,
+      color: 0x3a4149, metalness: 0.4, roughness: 0.45, depthTest: false, depthWrite: false });
+    const wood = new THREE.MeshStandardMaterial({ map: w.map, normalMap: w.normal, roughnessMap: w.rough,
+      color: 0x7b5230, metalness: 0.08, roughness: 0.68, depthTest: false, depthWrite: false });
+    const leather = new THREE.MeshStandardMaterial({ color: 0x5a4736, metalness: 0.05, roughness: 0.8,
+      depthTest: false, depthWrite: false });
+    return { steel, dark, wood, leather };
+  }
+
+  // depthTest is off (the gun must never be clipped by a wall you are pressed
+  // against), so the parts are drawn back-to-front: the far end first.
+  function gunMesh(parts) {
+    const g = new THREE.Group();
+    parts.sort((a, b) => a.z - b.z);
+    for (const p of parts) {
+      const mesh = new THREE.Mesh(p.geo, p.mat);
+      mesh.position.set(p.x, p.y, p.z);
+      mesh.rotation.set(p.rx || 0, p.ry || 0, p.rz || 0);
+      mesh.renderOrder = 10;
+      g.add(mesh);
+      if (p.key) { g[p.key] = mesh; g[p.key + 'Z'] = p.z; }
+    }
+    return g;
+  }
+
+  // the shooting hand, shared by all three guns: palm on the grip, three fingers
+  // curled over the front of it
+  function hand(M, gx, gy, gz) {
+    return [
+      { geo: box(0.048, 0.086, 0.052), mat: M.leather, x: gx + 0.004, y: gy, z: gz, rx: -0.2 },
+      { geo: box(0.012, 0.05, 0.02), mat: M.leather, x: gx - 0.028, y: gy + 0.012, z: gz - 0.012, rx: -0.3 },
+      { geo: box(0.012, 0.046, 0.02), mat: M.leather, x: gx - 0.028, y: gy - 0.018, z: gz - 0.004, rx: -0.3 },
+      { geo: box(0.012, 0.042, 0.02), mat: M.leather, x: gx - 0.028, y: gy - 0.046, z: gz + 0.006, rx: -0.3 },
+    ];
+  }
+
+  function buildPistol(M) {
+    const g = gunMesh([
+      { geo: cyl(0.016, 0.022), mat: M.dark, x: 0, y: 0.022, z: -0.192, rx: FWD },     // muzzle
+      { geo: cyl(0.012, 0.055), mat: M.steel, x: 0, y: 0.022, z: -0.162, rx: FWD },    // barrel
+      { geo: box(0.012, 0.011, 0.014), mat: M.dark, x: 0, y: 0.04, z: -0.15 },         // front sight
+      { geo: box(0.034, 0.034, 0.165), mat: M.steel, x: 0, y: 0.022, z: -0.082, key: 'slide' },  // slide
+      { geo: box(0.036, 0.016, 0.05), mat: M.dark, x: 0.006, y: 0.024, z: -0.05 },     // ejection port
+      { geo: box(0.014, 0.013, 0.018), mat: M.dark, x: 0, y: 0.041, z: -0.02 },        // rear sight
+      { geo: new THREE.TorusGeometry(0.019, 0.005, 8, 20), mat: M.dark, x: 0, y: -0.016, z: -0.022, ry: Math.PI / 2 },
+      { geo: box(0.010, 0.022, 0.012), mat: M.steel, x: 0, y: -0.02, z: -0.022 },      // trigger
+      { geo: box(0.032, 0.115, 0.048), mat: M.wood, x: 0, y: -0.056, z: 0.022, rx: -0.2 },
+      ...hand(M, 0, -0.056, 0.03),
+    ]);
+    g.muzzleTip = new THREE.Object3D();
+    g.muzzleTip.position.set(0, 0.022, -0.205);
+    g.add(g.muzzleTip);
+    return g;
+  }
+
+  function buildShotgun(M) {
+    const g = gunMesh([
+      { geo: cyl(0.018, 0.022), mat: M.dark, x: -0.017, y: 0.03, z: -0.325, rx: FWD },
+      { geo: cyl(0.018, 0.022), mat: M.dark, x: 0.017, y: 0.03, z: -0.325, rx: FWD },
+      { geo: cyl(0.015, 0.29), mat: M.steel, x: -0.017, y: 0.03, z: -0.17, rx: FWD },   // barrels
+      { geo: cyl(0.015, 0.29), mat: M.steel, x: 0.017, y: 0.03, z: -0.17, rx: FWD },
+      { geo: box(0.034, 0.012, 0.28), mat: M.dark, x: 0, y: 0.046, z: -0.17 },          // rib
+      { geo: box(0.042, 0.04, 0.09), mat: M.wood, x: 0, y: 0.004, z: -0.115, key: 'pump' },
+      { geo: box(0.048, 0.056, 0.16), mat: M.steel, x: 0, y: 0.012, z: -0.02 },         // receiver
+      { geo: box(0.042, 0.105, 0.20), mat: M.wood, x: 0.003, y: -0.042, z: 0.085, rx: 0.24 },
+      ...hand(M, 0, -0.05, -0.005),
+    ]);
+    g.muzzleTip = new THREE.Object3D();
+    g.muzzleTip.position.set(0, 0.03, -0.34);
+    g.add(g.muzzleTip);
+    return g;
+  }
+
+  function buildMachineGun(M) {
+    const g = gunMesh([
+      { geo: cyl(0.02, 0.03), mat: M.dark, x: 0, y: 0.02, z: -0.405, rx: FWD },
+      { geo: cyl(0.014, 0.32), mat: M.steel, x: 0, y: 0.02, z: -0.24, rx: FWD },
+      { geo: box(0.05, 0.028, 0.16), mat: M.dark, x: 0, y: 0.05, z: -0.19 },            // heat shield
+      { geo: box(0.056, 0.076, 0.22), mat: M.steel, x: 0, y: 0.012, z: -0.05 },         // receiver
+      { geo: cyl(0.05, 0.05), mat: M.dark, x: -0.052, y: 0.004, z: -0.05, rz: FWD },    // drum
+      { geo: box(0.032, 0.11, 0.05), mat: M.wood, x: 0, y: -0.05, z: 0.055, rx: -0.2 },
+      { geo: box(0.038, 0.085, 0.16), mat: M.wood, x: 0.003, y: -0.028, z: 0.13, rx: 0.16 },
+      ...hand(M, 0, -0.05, 0.06),
+    ]);
+    g.muzzleTip = new THREE.Object3D();
+    g.muzzleTip.position.set(0, 0.02, -0.42);
+    g.add(g.muzzleTip);
+    return g;
+  }
+
   function buildWeapon() {
-    weaponMesh = new THREE.Mesh(new THREE.PlaneGeometry(VIEW.w, VIEW.h),
-      new THREE.MeshBasicMaterial({ map: ART.weapons[0].idle, transparent: true, alphaTest: 0.4, depthTest: false }));
-    weaponMesh.position.set(VIEW.w / 2, 0, VIEW.z);
-    weaponMesh.renderOrder = 10;
-    camera.add(weaponMesh);
-    // the flash is a child of the gun, so it always sits on that gun's muzzle
-    flashMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
-      new THREE.MeshBasicMaterial({ map: ART.flash, transparent: true, depthWrite: false, depthTest: false }));
-    flashMesh.renderOrder = 11;
-    flashMesh.visible = false;
-    weaponMesh.add(flashMesh);
+    UNIT_Y = new THREE.Vector3(0, 1, 0);
+    ROLLQ = new THREE.Quaternion();
+    muzzlePos = new THREE.Vector3();   // scratch for the muzzle's world position
+    if (!gunLight) {
+      // a shoulder lamp on the camera: the hall lights are metres away, and a
+      // viewmodel 0.5 m from the eye needs its own key or it reads as a silhouette
+      gunLight = new THREE.PointLight(0xd6e4f2, 0.7, 1.5, 1.3);
+      gunLight.position.set(0.18, 0.42, 0.12);
+      camera.add(gunLight);
+    }
+    if (guns) {
+      for (const g of guns) {
+        g.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+        camera.remove(g);
+      }
+    }
+    const M = gunMaterials();
+    guns = [buildPistol(M), buildShotgun(M), buildMachineGun(M)];
+    for (const g of guns) {
+      g.rotation.order = 'YXZ';
+      g.visible = false;
+      camera.add(g);
+    }
+    // the flash is a world-space billboard at the muzzle, so it always faces the eye
+    if (!flashMesh) {
+      flashMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
+        new THREE.MeshBasicMaterial({ map: ART.flash, transparent: true, depthWrite: false, depthTest: false }));
+      flashMesh.renderOrder = 11;
+      flashMesh.visible = false;
+      scene.add(flashMesh);
+    } else {
+      flashMesh.material.map = ART.flash;
+    }
   }
 
   // ---- post-processing ----
@@ -412,27 +554,30 @@ const Main = (() => {
     flashLight.position.copy(camera.position);
     flashLight.color.setHex(p.hp < 30 ? 0xff5040 : 0xffe8b0);
     muzzleLight.position.set(p.x + Math.cos(p.a) * 0.6, EYE + 0.1, p.y + Math.sin(p.a) * 0.6);
-    // weapon viewmodel: bob + recoil + switch dip + fire frame
+    // weapon viewmodel: bob + recoil + switch dip, on real geometry
     const wm = ART.weapons[p.w];
     const firing = p.fireCd > WEAPONS[p.w].rate - 0.09;
-    weaponMesh.material.map = firing ? wm.fire : wm.idle;
+    const gun = guns[p.w];
+    for (let i = 0; i < guns.length; i++) guns[i].visible = i === p.w;
     const ky = p.moving ? Math.sin(p.bob) * 0.012 : 0;
     const kx = p.moving ? Math.cos(p.bob * 0.5) * 0.008 : 0;
     const sw = (p.switchT || 0) > 0 ? Math.sin((0.3 - p.switchT) / 0.3 * Math.PI) : 0;
     const kick = p.kick || 0;
     const anchor = viewAnchor();
-    weaponMesh.position.set(anchor.x + kx, anchor.y + ky - sw * 0.14 + kick * 1.2, VIEW.z + kick * 0.45);
-    weaponMesh.rotation.z = -kick * 2.4 - sw * 0.3;            // twists in the hand on recoil, dips on switch
-    // pin the bloom to this gun's muzzle pixel and let it ride with the recoil
-    const [mx, my] = wm.muzzle;
-    flashMesh.position.set((mx / 128 - 0.5) * VIEW.w, (0.5 - (my + (firing ? 3 : 0)) / 96) * VIEW.h, 0.02);
+    gun.position.set(anchor.x + kx, anchor.y + ky - sw * 0.14 + kick * 1.2, VIEW.z + kick * 0.45);
+    gun.rotation.set(GUN_TILT + kick * 2.2 - sw * 0.1, GUN_YAW + sw * 0.35, -kick * 2.4 - sw * 0.3);
+    // the working parts cycle on the shot
+    if (gun.slide) gun.slide.position.z = gun.slideZ + (firing ? 0.024 : 0);
+    if (gun.pump) gun.pump.position.z = gun.pumpZ + (firing ? 0.03 : 0);
+    gun.muzzleTip.getWorldPosition(muzzlePos);
+    // pin the bloom to the muzzle and let it ride with the recoil
     if (firing) {
-      const s = (wm.bloom * 2 / 96) * VIEW.h * (0.9 + Math.random() * 0.25);
+      const s = (wm.bloom * 2 / 96) * VIEW.h * (2.4 + Math.random() * 0.6);
+      flashMesh.position.copy(muzzlePos);
+      flashMesh.quaternion.copy(camera.quaternion).multiply(ROLLQ.setFromAxisAngle(UNIT_Y, Math.random() * 0.7));
       flashMesh.scale.set(s, s, 1);
-      flashMesh.rotation.z = Math.random() * 0.7;
       flashMesh.visible = true;
-      flashMesh.getWorldPosition(muzzlePos);   // light comes from the actual muzzle
-      muzzleLight.position.copy(muzzlePos);
+      muzzleLight.position.copy(muzzlePos);   // light comes from the actual muzzle
       muzzleLight.intensity = 2.2;
     } else {
       flashMesh.visible = false;
@@ -970,6 +1115,7 @@ const Main = (() => {
       box.innerHTML = '<h1>GRIM HALL</h1><h2>' + LEVELS[G.level].name + ' &mdash; level ' + (G.level + 1) + ' of ' + LEVELS.length + '</h2>' +
         '<div class="ctl"><b>WASD</b> move &nbsp; <b>Shift</b> sprint &nbsp; <b>mouse</b> look &nbsp; <b>click / space</b> fire<br>' +
         '<b>1 2 3</b> weapons &nbsp; <b>M</b> map &nbsp; new guns auto-equip &nbsp; ESC pauses<br>' +
+        '<b>touch</b> drag to steer &amp; walk &nbsp; tap to fire &nbsp; hold to pause &nbsp; tap <b>GUN</b> to swap<br>' +
         'kill all ' + G.total + ' horrors, then reach the green <b>EXIT</b> &mdash; a secret hides in these walls</div>' +
         '<div class="go">[ CLICK TO ENTER ]</div>';
     } else if (kind === 'dead') {
@@ -1006,11 +1152,12 @@ const Main = (() => {
     const q = new URLSearchParams(location.search);
     if (q.get('tp')) { const [x, y, a] = q.get('tp').split(',').map(Number); G.player.x = x; G.player.y = y; G.player.a = a || 0; }
     const cv = renderer.domElement;
-    if (!q.get('auto') && cv.requestPointerLock) cv.requestPointerLock();
+    if (!q.get('auto') && cv.requestPointerLock) { try { cv.requestPointerLock(); } catch (e) {} }
   }
   // ---- input ----
   function bindInput() {
     const KEYMAP = { w: 'fwd', arrowup: 'fwd', s: 'back', arrowdown: 'back', a: 'left', d: 'right' };
+    let lastTouch = 0;   // a tap also raises mousedown; this keeps it from firing twice
     // sound controls (V mutes, - / + adjust volume); preference survives reloads
     const sndBtn = $('sndBtn');
     const refreshSound = () => {
@@ -1040,6 +1187,7 @@ const Main = (() => {
       if (k === '3') Input.wantW = 2;
       if (k === 'm') G.mini = !G.mini;
       if (k === 'shift') Input.sprint = 1;
+      if (k === 'arrowleft' || k === 'arrowright') { arrowTurn(); e.preventDefault(); }
       if (k === 'v') {
         Sound.mute(!Sound.muted);
         try { localStorage.setItem('gh.mute', Sound.muted ? '1' : '0'); } catch (err) {}
@@ -1056,10 +1204,12 @@ const Main = (() => {
       if (KEYMAP[k]) Input[KEYMAP[k]] = 0;
       if (k === ' ') Input.fire = 0;
       if (k === 'shift') Input.sprint = 0;
+      if (k === 'arrowleft' || k === 'arrowright') arrowTurn();
     });
     const cv = () => renderer.domElement;
     document.addEventListener('mousedown', e => {
       if (e.button !== 0) return;
+      if (performance.now() - lastTouch < 400) return;   // the tap was already handled as a touch
       if (G.state === 'pause') {
         G.state = 'play'; $('ov').classList.add('hidden');
         if (cv().requestPointerLock) cv().requestPointerLock();
@@ -1073,8 +1223,11 @@ const Main = (() => {
       Input.fire = 1; Input.fireEdge = 1;
       if (document.pointerLockElement !== cv() && cv().requestPointerLock) cv().requestPointerLock();
     });
+    // only a lost lock pauses: a phone never gets one in the first place
+    let hadLock = false;
     document.addEventListener('pointerlockchange', () => {
-      if (!document.pointerLockElement && G.state === 'play' && !location.search.includes('auto')) {
+      if (document.pointerLockElement === cv()) hadLock = true;
+      else if (hadLock && G.state === 'play' && !location.search.includes('auto')) {
         G.state = 'pause'; showOverlay('pause');
       }
     });
@@ -1083,10 +1236,66 @@ const Main = (() => {
       if (document.pointerLockElement === cv() && G.state === 'play') G.player.a += e.movementX * 0.0022;
     });
     cv().addEventListener('contextmenu', e => e.preventDefault());
-    // arrow-key turning
-    setInterval(() => {
-      Input.turn = (keys.arrowleft ? -1 : 0) + (keys.arrowright ? 1 : 0);
-    }, 16);
+
+    // ---- touch: drag to steer and walk, tap to fire, hold (without dragging) to pause ----
+    // A finger leaves no pointer lock, so the whole control surface is one
+    // virtual stick anchored where the finger first lands.
+    const STEER = 34;                        // px of drag for full turn / walk rate
+    const DEAD = 12;                         // less than this is a tap, not a drag
+    const TAP_MS = 320, HOLD_MS = 800;
+    const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+    let touch = null;
+    const stopStick = () => { Input.turn = Input.fwd = Input.back = 0; };
+    cv().addEventListener('touchstart', e => {
+      lastTouch = performance.now();
+      if (G.state !== 'play') return;
+      const p = e.touches[0];
+      touch = { ox: p.clientX, oy: p.clientY, t0: lastTouch, dragged: false };
+      touch.hold = setTimeout(() => {
+        if (G.state === 'play') { stopStick(); G.state = 'pause'; showOverlay('pause'); }
+      }, HOLD_MS);
+      e.preventDefault();
+    }, { passive: false });
+    cv().addEventListener('touchmove', e => {
+      if (!touch || G.state !== 'play') return;
+      const p = e.touches[0];
+      const dx = p.clientX - touch.ox, dy = p.clientY - touch.oy;
+      if (Math.hypot(dx, dy) > DEAD) {
+        if (!touch.dragged) { touch.dragged = true; clearTimeout(touch.hold); }  // a drag never pauses
+        Input.turn = clamp(dx / STEER, -1, 1);
+        Input.fwd = clamp(-dy / STEER, 0, 1);
+        Input.back = clamp(dy / STEER, 0, 1);
+      } else {
+        stopStick();
+      }
+      e.preventDefault();
+    }, { passive: false });
+    const endTouch = e => {
+      lastTouch = performance.now();
+      if (!touch) return;
+      clearTimeout(touch.hold);
+      if (!touch.dragged && performance.now() - touch.t0 < TAP_MS) {
+        // the trigger has to stay down long enough for a sim frame to see it
+        Input.fire = 1; Input.fireEdge = 1;
+        setTimeout(() => { Input.fire = 0; }, 120);
+      }
+      stopStick();
+      touch = null;
+      e.preventDefault();
+    };
+    cv().addEventListener('touchend', endTouch);
+    cv().addEventListener('touchcancel', endTouch);
+    // the HUD gun cell is the only weapon swap that works without a keyboard
+    $('gunCell').addEventListener('mousedown', e => {
+      e.stopPropagation();
+      const p = G.player;
+      for (let i = 1; i <= 3; i++) {
+        const w = (p.w + i) % 3;
+        if (w === 0 || (w === 1 && p.owns.sg) || (w === 2 && p.owns.mg)) { Input.wantW = w; break; }
+      }
+    });
+    // arrow-key turning (no polling interval: it would overwrite the touch stick)
+    const arrowTurn = () => { Input.turn = (keys.arrowleft ? -1 : 0) + (keys.arrowright ? 1 : 0); };
   }
   // ---- boot ----
   window.addEventListener('load', () => {

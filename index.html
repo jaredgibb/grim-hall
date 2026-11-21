@@ -10,7 +10,7 @@
     font-family:'Courier New',monospace;user-select:none;}
   #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#000;}
   #wrap canvas{image-rendering:pixelated;image-rendering:crisp-edges;
-    width:min(100vw,calc(100vh*1.6));height:min(100vw/1.6,100vh);}
+    width:min(100vw,calc(100vh*1.6));height:min(100vw/1.6,100vh);touch-action:none;}
   /* ---- HUD status bar (wolf3d style) ---- */
   #hud{position:fixed;left:50%;transform:translateX(-50%);bottom:0;width:min(100vw,calc(100vh*1.6));
     height:calc(min(100vw,calc(100vh*1.6))/8);background:#1a1a1a;border-top:3px solid #444;
@@ -59,7 +59,7 @@
   <div class="cell"><div class="lbl">ARMOR</div><div class="val" id="hArm" style="color:#7fb2ff;text-shadow:0 0 6px #26a">0</div></div>
   <div class="cell" id="faceCell"><canvas id="face" width="48" height="48"></canvas></div>
   <div class="cell"><div class="lbl">AMMO</div><div class="val" id="hAmmo">--</div></div>
-  <div class="cell"><div class="lbl">GUN</div><div class="val" id="hGun" style="font-size:14px">PISTOL</div></div>
+  <div class="cell" id="gunCell"><div class="lbl">GUN</div><div class="val" id="hGun" style="font-size:14px">PISTOL</div></div>
   <div class="cell"><div class="lbl">KILLS</div><div class="val" id="hKills">0/10</div></div>
   <div class="cell"><div class="lbl">TIME</div><div class="val" id="hTime" style="font-size:16px">0:00</div></div>
   <div class="cell"><div class="lbl">SOUND</div><button id="sndBtn" title="toggle sound (V)">&#9835; ON</button></div>
