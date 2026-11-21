@@ -1,6 +1,6 @@
 # GRIM HALL
 
-A Wolfenstein 3D-style retro FPS. Fifteen levels, 3 guns, 4 enemy types, 100% procedural
+A Wolfenstein 3D-style retro FPS. Sixteen levels, 3 guns, 4 enemy types, 100% procedural
 art and audio (no external assets — the only vendored file is the Three.js engine).
 
 ## Run it
