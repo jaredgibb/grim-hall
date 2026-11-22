@@ -48,6 +48,11 @@
   #sysbar{position:fixed;left:calc(env(safe-area-inset-left) + 8px);
     top:calc(env(safe-area-inset-top) + 8px);display:none;gap:8px;z-index:5;}
   body.touch #sysbar{display:flex;}
+  /* left-handed play mirrors the whole layout, chrome included: the rare switches
+     end up in the corner furthest from the working thumb, and the minimap takes
+     the other corner so the two never collide. */
+  body.touch.mirror #sysbar{left:auto;right:calc(env(safe-area-inset-right) + 8px);}
+  body.touch.mirror #mini{right:auto;left:calc(env(safe-area-inset-left) + 8px);}
   #sysbar button{min-width:44px;min-height:44px;font-size:11px;letter-spacing:1px;
     background:rgba(0,0,0,.6);}
   .touchonly{display:none;}
@@ -85,6 +90,10 @@
   .tstick.on .knob{opacity:.9;box-shadow:0 0 10px rgba(255,215,94,.5);}
   .tstick.sprint{border-color:#ff5040;}
   .tstick.sprint .knob{background:#ff5040;box-shadow:0 0 12px rgba(255,60,40,.7);}
+  /* the aim assist announces itself: an invisible nudge reads as the game
+     steering on its own, and a player who can see it can trust it - or turn it off */
+  .tstick.assist{border-color:#7dff6a;}
+  .tstick.assist .knob{box-shadow:0 0 10px rgba(125,255,106,.45);}
   #firePad{position:absolute;width:66px;height:66px;border:2px solid #7a2a2a;border-radius:10px;
     background:rgba(122,42,42,.30);color:#ffd75e;font-size:11px;letter-spacing:2px;
     display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -124,9 +133,11 @@
 </div>
 <div id="touchUI" class="hidden">
   <div id="tip">LEFT THUMB drag to move &middot; RIGHT THUMB drag to turn &middot; FIRE hold to shoot</div>
-  <div class="tstick" id="moveStick"><div class="knob"></div></div>
-  <div class="tstick" id="lookStick"><div class="knob"></div></div>
-  <div id="firePad">FIRE<small>hold</small></div>
+  <!-- the sticks are drag surfaces, not buttons: a screen reader cannot drag them,
+       so they are hidden from it and the FIRE pad carries the accessible label -->
+  <div class="tstick" id="moveStick" aria-hidden="true"><div class="knob"></div></div>
+  <div class="tstick" id="lookStick" aria-hidden="true"><div class="knob"></div></div>
+  <div id="firePad" role="button" aria-label="Fire: hold to shoot, slide to turn">FIRE<small>hold / slide</small></div>
 </div>
 <div id="hit">+</div>
 <div id="ov"><div class="panel" id="ovBox"></div></div>

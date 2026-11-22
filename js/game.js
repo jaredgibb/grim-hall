@@ -351,13 +351,16 @@
     const cosA = Math.cos(p.a), sinA = Math.sin(p.a);
     let mx = cosA * f - sinA * s, my = sinA * f + cosA * s;
     const len = Math.hypot(mx, my);
-    p.moving = len > 0;
-    if (len > 0) {
+    // A thumb stick is analog: how far it is deflected *is* how fast you walk.
+    // Keyboard input always saturates at len >= 1, so this changes touch feel only.
+    const mag = Math.min(1, len);
+    p.moving = mag > 0.05;
+    if (mag > 0.05) {
       mx /= len; my /= len;
-      const spd = TUNE.playerSpeed * (inp.sprint ? 1.55 : 1);
+      const spd = TUNE.playerSpeed * mag * (inp.sprint ? 1.55 : 1);
       moveEnt(p, mx * spd * dt, my * spd * dt, TUNE.playerR);
-      p.bob += dt * 9;
-      p.stepT -= dt;
+      p.bob += dt * 9 * mag;
+      p.stepT -= dt * mag;              // footsteps keep pace with the walk, not the clock
       if (p.stepT <= 0) { p.stepT = 0.38; (inWater(p.x, p.y) ? AUDIO.wade() : AUDIO.step()); }
     }
     const auto = WEAPONS[p.w].auto;

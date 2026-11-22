@@ -78,8 +78,8 @@ const Main = (() => {
       // A thumb resting on FIRE is not an edge. On a mouse you click again; on a
       // phone you just keep pushing, so a held trigger re-edges the semi-auto guns.
       if (Input.fire && Input.autoFire) Input.fireEdge = 1;
-      aimAssist();
-      TouchUI.update();
+      TouchUI.update();       // the sticks write their input first...
+      aimAssist();            // ...so the assist can blend into what is left
       Game.update(dt);
       if (G.state !== lastState) {              // music follows the game state
         if (G.state === 'play') Music.start(); else Music.stop();
@@ -1103,6 +1103,10 @@ const Main = (() => {
     const hudHidden = G.state === 'title';
     if (TOUCH && $('hud').classList.contains('hidden') !== hudHidden) TouchUI.apply();
     $('hud').classList.toggle('hidden', hudHidden);
+    // An assist the player cannot see reads as the game steering on its own, so
+    // the look stick wears a ring while the assist is actually pulling.
+    const ls = $('lookStick');
+    if (ls) ls.classList.toggle('assist', assistOn);
     if (G.mini && t - lastMini > 0.12) { lastMini = t; drawMini(); }
     $('mini').style.display = G.mini && G.state === 'play' ? 'block' : 'none';
   }
@@ -1122,15 +1126,27 @@ const Main = (() => {
     g.fillStyle = G.exit.active ? '#3f6' : '#f80';
     g.fillRect(G.exit.x * s - 2, G.exit.y * s - 2, 4, 4);
     const p = G.player;
+    if (assistOn) {
+      // An assist the player cannot see reads as the game fighting the player.
+      // The minimap sits outside the thumb's footprint, so it can carry the cue.
+      g.strokeStyle = 'rgba(125,255,106,.75)'; g.lineWidth = 1.5;
+      g.beginPath(); g.arc(p.x * s, p.y * s, 5, 0, TAU); g.stroke();
+    }
     g.save(); g.translate(p.x * s, p.y * s); g.rotate(-p.a);
     g.fillStyle = '#ffd75e'; g.beginPath(); g.moveTo(4, 0); g.lineTo(-3, -3); g.lineTo(-3, 3); g.fill(); g.restore();
   }
   // ---- touch aiming assist (opt-in) ----
   // A thumb cannot aim like a mouse, so the option nudges the heading toward the
-  // nearest visible enemy. It only engages when the player is not already turning,
-  // and it never fires the gun: it buys time, not kills.
+  // nearest visible enemy. It blends with the stick instead of switching off the
+  // moment the stick moves: a player who is walking and turning is most players,
+  // and an assist that only works when nothing else is happening is an assist that
+  // never works. It fills the authority the thumb is not using, so deliberate input
+  // always wins. It never fires the gun: it buys time, not kills.
+  let assistOn = false;
   function aimAssist() {
-    if (!TOUCH || !Input.aim || G.state !== 'play' || Input.turn) return;
+    if (!TOUCH || !Input.aim || G.state !== 'play') { assistOn = false; return; }
+    const stick = Math.max(-1, Math.min(1, Input.turn || 0));
+    if (Math.abs(stick) >= 0.9) { assistOn = false; return; }   // the thumb is aiming on purpose
     const p = G.player;
     let best = null, bd = 90;                 // ~9.5 tiles: aiming past that is pointless
     for (const e of G.enemies) {
@@ -1138,12 +1154,14 @@ const Main = (() => {
       const dx = e.x - p.x, dy = e.y - p.y, d2 = dx * dx + dy * dy;
       if (d2 < bd && Game.hasLOS(p.x, p.y, e.x, e.y)) { bd = d2; best = e; }
     }
-    if (!best) return;
+    if (!best) { assistOn = false; return; }
     let rel = Math.atan2(best.y - p.y, best.x - p.x) - p.a;
     while (rel > Math.PI) rel -= TAU;
     while (rel < -Math.PI) rel += TAU;
-    if (Math.abs(rel) < 0.04) return;         // already roughly on target
-    Input.turn = Math.max(-0.4, Math.min(0.4, rel * 0.8));
+    if (Math.abs(rel) < 0.04) { assistOn = false; return; }     // already roughly on target
+    const want = Math.max(-0.4, Math.min(0.4, rel * 0.8));
+    Input.turn = stick + want * (1 - Math.abs(stick));
+    assistOn = true;
   }
   // ---- overlays ----
   function toggleMap() {
@@ -1168,6 +1186,7 @@ const Main = (() => {
       b('autofire', 'AUTO-FIRE', prefs.autofire !== false) +
       b('aim', 'AIM ASSIST', prefs.aim === true) +
       b('sens', 'LOOK ' + (prefs.sens === 'high' ? 'HIGH' : prefs.sens === 'low' ? 'LOW' : 'MED'), true) +
+      b('curve', (prefs.curve === 1 ? 'LINEAR' : 'CURVED') + ' LOOK', prefs.curve !== 1) +
       (gyroOK ? b('gyro', 'GYRO AIM', prefs.gyro === true) : '') +
       b('haptics', 'HAPTICS', prefs.haptics !== false) +
       '</div>';
@@ -1181,6 +1200,7 @@ const Main = (() => {
     else if (id === 'autofire') prefs.autofire = prefs.autofire === false;
     else if (id === 'aim') prefs.aim = !prefs.aim;
     else if (id === 'sens') prefs.sens = (prefs.sens || 'med') === 'med' ? 'high' : prefs.sens === 'high' ? 'low' : 'med';
+    else if (id === 'curve') prefs.curve = (prefs.curve === undefined || prefs.curve > 1) ? 1 : 1.6;
     else if (id === 'haptics') prefs.haptics = prefs.haptics === false;
     else if (id === 'gyro') {
       prefs.gyro = !prefs.gyro;
@@ -1387,9 +1407,16 @@ const Main = (() => {
     $('touchUI').classList.remove('hidden');
     const TAP_MS = 320;                       // a tap that never dragged is a trigger pull
     const FIRE_W = 66;                        // fire pad size (>= the 44 px minimum)
-    let R = 44, DEAD = 11, STEER = 34;        // stick radius, its dead zone, drag for full turn
+    let R = 44, DEAD = 11, LOOKDEAD = 4;      // walking dead zone vs aiming dead zone
+    let MOVE_IN = 6, LOOK_IN = 2;             // the smaller threshold that re-enters a dead zone
+    let STEER = 34, AIM = 51;                 // drag for a full turn, slide FIRE to aim
+    let CURVE = 1.6;                          // look-stick response exponent (1 = linear)
+    let moveActive = false, lookActive = false;
     const SENS = { low: 1.4, med: 1, high: 0.7 };   // px of drag needed for a full turn
     let tipTimer = 0;
+    // where the sticks sit when nobody is touching them, so they pop back into
+    // view after every release instead of staying where the thumb left them
+    const home = { move: [0, 0], look: [0, 0] };
 
     // read the safe-area insets once (they only exist with viewport-fit=cover)
     const probe = document.createElement('div');
@@ -1403,7 +1430,15 @@ const Main = (() => {
       // big enough to feel like a stick, small enough not to eat the screen
       R = Math.max(30, Math.min(64, 0.13 * Math.min(innerWidth, innerHeight)));
       DEAD = R * 0.25;                        // a thumb jittering inside this is not a step
+      MOVE_IN = DEAD * 0.6;                   // once walking, drift below this to stop
+      // Aiming needs a far smaller dead zone than walking. A resting thumb drifts a
+      // couple of pixels; a two-pixel flick on the look stick should still turn.
+      LOOKDEAD = Math.max(3, R * 0.08);
+      LOOK_IN = LOOKDEAD * 0.5;
+      CURVE = Math.max(1, Math.min(2.5, prefs.curve === undefined ? 1.6 : prefs.curve));
       STEER = Math.max(22, R * 0.7) * (SENS[prefs.sens] || 1);   // turn rate scales with the stick
+      AIM = STEER * 1.5;                      // sliding FIRE aims more gently than the look stick
+      document.body.classList.toggle('mirror', !!prefs.mirror);  // rare switches follow the hand
       for (const el of [moveEl, lookEl]) el.style.width = el.style.height = (2 * R) + 'px';
       // Rest the controls in the empty letterbox bars, clear of the HUD and the
       // notch. A hidden HUD reports nothing, so fall back to the height CSS gives
@@ -1442,16 +1477,21 @@ const Main = (() => {
 
     const move = { id: -1, ox: 0, oy: 0, dragged: false, t0: 0, combo: false, a0: 0, dir: 0 };
     const look = { id: -1, ox: 0, oy: 0, dragged: false, t0: 0 };
+    // the FIRE pad is also a thumb pad: hold it to shoot, slide it to turn. One
+    // thumb cannot be on two controls at once, and a shooter that makes you choose
+    // between aiming and firing is a shooter you cannot play.
+    const fire = { id: -1, ox: 0, oy: 0 };
     const zeroMove = () => { Input.fwd = Input.back = Input.left = Input.right = Input.sprint = 0; };
     const wrap = (a) => { while (a > Math.PI) a -= TAU; while (a < -Math.PI) a += TAU; return a; };
 
     // A tap is one trigger pull, not a held trigger. If the action is still
     // cooling when the tap lands, hold the beat so the shot is not swallowed -
-    // a thumb tap is far quicker than a 0.9 s shotgun cycle.
+    // a thumb tap is far quicker than a 0.9 s shotgun cycle. The queue has to
+    // outlive that cooldown, otherwise the tap is just a dead press.
     let tapUntil = 0, tapShots = 0, padDown = false;
     const tapFire = () => {
       tapShots = G.stats.shots;
-      tapUntil = performance.now() + 900;
+      tapUntil = performance.now() + Math.max(400, ((G.player.fireCd || 0) + 0.4) * 1000);
       Input.fire = 1; Input.fireEdge = 1;
     };
     function endMove() {
@@ -1459,19 +1499,26 @@ const Main = (() => {
       // one-thumb mode has no dedicated fire button in the way, so a flick-less
       // tap on the stick is the trigger
       if (move.combo && !move.dragged && performance.now() - move.t0 < TAP_MS) tapFire();
-      move.id = -1; zeroMove();
+      move.id = -1; moveActive = false; zeroMove();
       if (move.combo) Input.turn = 0;
       moveEl.classList.remove('on', 'sprint'); moveEl.classList.add('rest');
+      moveEl.style.left = home.move[0] + 'px'; moveEl.style.top = home.move[1] + 'px';
       moveKnob.style.transform = 'translate(0,0)';
     }
     function endLook() {
       if (look.id < 0) return;
       if (!look.dragged && performance.now() - look.t0 < TAP_MS) tapFire();
-      look.id = -1; Input.turn = 0;
-      lookEl.classList.remove('on');
+      look.id = -1; lookActive = false; Input.turn = 0;
+      lookEl.classList.remove('on'); lookEl.classList.add('rest');
+      lookEl.style.left = home.look[0] + 'px'; lookEl.style.top = home.look[1] + 'px';
       lookKnob.style.transform = 'translate(0,0)';
     }
-    const endFire = () => { padDown = false; Input.fire = 0; firePad.classList.remove('down'); };
+    const endFire = () => {
+      padDown = false; Input.fire = 0; firePad.classList.remove('down');
+      // release by pointer id, not by target: a thumb that slides off the pad and
+      // lifts on the canvas must not leave the trigger stuck down
+      if (fire.id >= 0) { fire.id = -1; if (look.id < 0) Input.turn = 0; }
+    };
     TouchUI.release = () => { endMove(); endLook(); endFire(); };
     // One-thumb steering has to be re-evaluated every frame: the finger stays
     // put while the heading changes, so the turn has to close the remaining angle.
@@ -1490,7 +1537,7 @@ const Main = (() => {
       lastTouch = performance.now();
       if (e.pointerId === move.id) endMove();
       if (e.pointerId === look.id) endLook();
-      if (e.target === firePad) endFire();
+      if (e.pointerId === fire.id || e.target === firePad) endFire();
     };
 
     document.addEventListener('pointerdown', e => {
@@ -1506,6 +1553,7 @@ const Main = (() => {
       if (isFire) {
         firePad.classList.add('down');
         padDown = true;
+        fire.id = e.pointerId; fire.ox = e.clientX; fire.oy = e.clientY;
         Input.fire = 1; Input.fireEdge = 1;
         return;
       }
@@ -1526,8 +1574,15 @@ const Main = (() => {
       if (G.state !== 'play') return;
       if (e.pointerId === move.id) {
         let dx = e.clientX - move.ox, dy = e.clientY - move.oy, d = Math.hypot(dx, dy);
-        if (d > DEAD) move.dragged = true;
-        if (d <= DEAD) {                          // a resting thumb is not a step
+        // Hysteresis: leaving the dead zone needs d > DEAD, re-entering it needs the
+        // smaller MOVE_IN. A single threshold makes a thumb hovering at the edge
+        // alternate between walking and not walking, and every crossing re-triggers
+        // the footstep sound.
+        if (moveActive ? d > MOVE_IN : d > DEAD) {
+          moveActive = true;
+          if (d > DEAD) move.dragged = true;
+        } else {                          // a resting thumb is not a step
+          moveActive = false;
           zeroMove(); if (move.combo) Input.turn = 0;
           moveEl.classList.remove('sprint');
           moveKnob.style.transform = 'translate(0,0)';
@@ -1562,13 +1617,29 @@ const Main = (() => {
         moveKnob.style.transform = 'translate(' + (ux * off) + 'px,' + (uy * off) + 'px)';
       } else if (e.pointerId === look.id) {
         let dx = e.clientX - look.ox, dy = e.clientY - look.oy;
-        if (Math.hypot(dx, dy) > DEAD) look.dragged = true;
+        if (Math.hypot(dx, dy) > LOOKDEAD) look.dragged = true;
         // the look anchor follows the thumb past STEER px, so a long sweep keeps
         // turning and flicking back reverses it immediately
         if (dx > STEER) { look.ox += dx - STEER; dx = STEER; }
         else if (dx < -STEER) { look.ox += dx + STEER; dx = -STEER; }
-        Input.turn = Math.abs(dx) <= DEAD ? 0 : Math.max(-1, Math.min(1, dx / STEER));
+        const mag = Math.abs(dx);
+        // Same hysteresis shape as the move stick: leave the dead zone at LOOKDEAD,
+        // re-enter only below LOOK_IN.
+        if (lookActive ? mag > LOOK_IN : mag > LOOKDEAD) {
+          lookActive = true;
+          // Power curve: the first third of the drag is where aim precision lives,
+          // the outer part is where the player just wants a fast turn.
+          Input.turn = Math.sign(dx) * Math.pow(Math.min(1, mag / STEER), CURVE);
+        } else {
+          lookActive = false; Input.turn = 0;
+        }
         lookKnob.style.transform = 'translate(' + dx + 'px,' + Math.max(-R, Math.min(R, dy)) + 'px)';
+      } else if (e.pointerId === fire.id) {
+        // aim while the trigger is held: the FIRE pad is a thumb pad, not a button
+        let dx = e.clientX - fire.ox;
+        if (dx > AIM) { fire.ox += dx - AIM; dx = AIM; }
+        else if (dx < -AIM) { fire.ox += dx + AIM; dx = -AIM; }
+        Input.turn = Math.sign(dx) * Math.pow(Math.min(1, Math.abs(dx) / AIM), CURVE);
       }
     }, { passive: false });
 
@@ -1610,7 +1681,16 @@ const Main = (() => {
     const hudBtn = (id, fn) => $(id).addEventListener('pointerdown', e => {
       e.preventDefault(); e.stopPropagation(); fn();
     });
-    hudBtn('gunCell', swapGun);
+    // The GUN cell cycles, so a thumb that brushes it twice silently swings the
+    // weapon back. The accessibility guidelines' input cool-down, applied where it
+    // actually bites.
+    let lastGunTap = 0;
+    hudBtn('gunCell', () => {
+      const now = performance.now();
+      if (now - lastGunTap < 400) return;
+      lastGunTap = now;
+      swapGun();
+    });
     hudBtn('mapBtn', toggleMap);
     hudBtn('pauseBtn', () => { endMove(); endLook(); endFire(); pauseGame(); });
   }

@@ -40,6 +40,27 @@ window.addEventListener('load', () => {
         'stick bottom ' + Math.round(moveEl.getBoundingClientRect().bottom) + ' hud top ' + Math.round(hudTop));
       ok('legend tip present', document.getElementById('tip').textContent.includes('THUMB'));
 
+      // ---- the control surface: reachable, big enough, and never overlapping ----
+      const lookEl = document.getElementById('lookStick');
+      const sysbar = document.getElementById('sysbar');
+      // rect() returns [w, h, left, top]; overlap is the area two boxes share
+      const overlap = (a, b) => Math.max(0, Math.min(a[0] + a[2], b[0] + b[2]) - Math.max(a[2], b[2])) *
+                               Math.max(0, Math.min(a[1] + a[3], b[1] + b[3]) - Math.max(a[3], b[3]));
+      const inside = r => r[2] >= 0 && r[3] >= 0 && r[0] + r[2] <= innerWidth && r[1] + r[3] <= innerHeight;
+      const fr = rect(firePad), mr = rect(moveEl), lr = rect(lookEl);
+      ok('look stick has a visible resting home', getComputedStyle(lookEl).opacity !== '0',
+        'opacity ' + getComputedStyle(lookEl).opacity);
+      ok('move, look and FIRE do not overlap', overlap(mr, lr) === 0 && overlap(mr, fr) === 0 && overlap(lr, fr) === 0,
+        'move ' + mr.join('x') + ' look ' + lr.join('x') + ' fire ' + fr.join('x'));
+      ok('no control hangs off the screen', inside(fr) && inside(mr) && inside(lr),
+        'viewport ' + innerWidth + 'x' + innerHeight);
+      ok('the sticks are clear of the minimap', overlap(rect(document.getElementById('mini')), mr) === 0 &&
+        overlap(rect(document.getElementById('mini')), lr) === 0, 'mini ' + rect(document.getElementById('mini')).join('x'));
+      for (const b of sysbar.querySelectorAll('button'))
+        ok(b.id + ' is out of the thumb traffic', overlap(rect(b), fr) === 0 && overlap(rect(b), mr) === 0 && overlap(rect(b), lr) === 0,
+          b.id + ' ' + rect(b).join('x'));
+      const lookHome = [parseFloat(lookEl.style.left), parseFloat(lookEl.style.top)];
+
       // ---- move stick: dead zone, analog, sprint, drift ----
       drag(1, 150, 300, 150, 292);            // 8 px: inside the dead zone
       ok('dead zone: a resting thumb is not a step', I.fwd === 0 && I.back === 0 && I.left === 0 && I.right === 0);
@@ -54,6 +75,48 @@ window.addEventListener('load', () => {
         'stick left=' + moveEl.style.left);
       pt(cv, 'pointerup', 1, 150, 380);
       ok('release stops movement', I.fwd === 0 && I.back === 0 && I.left === 0 && I.right === 0 && I.sprint === 0);
+
+      // ---- analog walk: deflection is the speed, not just walk-or-sprint ----
+      const Rstick = rect(moveEl)[0] / 2;
+      const MAP = GH.game.grid();
+      let spot = null;
+      for (let yy = 2; yy < MAP.length - 3 && !spot; yy++)
+        for (let xx = 2; xx < MAP[yy].length - 3 && !spot; xx++) {
+          if ('#T'.includes(MAP[yy][xx]) || '#T'.includes(MAP[yy][xx + 1]) || '#T'.includes(MAP[yy][xx + 2])) continue;
+          if (G.enemies.some(e => !e.dead && Math.abs(e.x - xx) < 3 && Math.abs(e.y - yy) < 3)) continue;
+          spot = [xx + 0.5, yy + 0.5];
+        }
+      // Hold the stick at a given deflection and measure the tiles it actually
+      // covers, so the assertion tests the whole chain, not just the input layer.
+      const walk = (px) => {
+        if (!spot) return -1;
+        const p = G.player; p.x = spot[0]; p.y = spot[1]; p.a = 0;
+        pt(cv, 'pointerdown', 13, 150, 300);
+        pt(cv, 'pointermove', 13, 150, 300 - px);
+        for (let i = 0; i < 20; i++) GH.game.update(1 / 60);   // 1/3 s of sim
+        pt(cv, 'pointerup', 13, 150, 300 - px);
+        return Math.hypot(p.x - spot[0], p.y - spot[1]);
+      };
+      if (spot) {
+        const home = [G.player.x, G.player.y, G.player.a];   // the spawn neighbourhood the later tests need
+        const slow = walk(Rstick * 0.45), mid = walk(Rstick * 0.65), fast = walk(Rstick * 0.8);
+        G.player.x = home[0]; G.player.y = home[1]; G.player.a = home[2];
+        ok('a half-deflected thumb walks slower than a full one', slow > 0.1 && mid > slow + 0.1 && fast > mid + 0.1,
+          '45% = ' + slow.toFixed(2) + ' tiles, 65% = ' + mid.toFixed(2) + ' tiles, 80% = ' + fast.toFixed(2) + ' tiles');
+        ok('the walk is a gradient, not a walk/sprint cliff', fast / slow < 2.2 && fast / slow > 1.4,
+          'ratio ' + (fast / slow).toFixed(2));
+      } else {
+        ok('no open ground to measure the walk gradient', false, 'no clear spot found');
+      }
+
+      // ---- dead-zone hysteresis: hovering at the edge must not stutter ----
+      drag(14, 150, 300, 150, 300 - Rstick * 0.35);   // past the dead zone (0.25 R)
+      ok('the stick engages past its dead zone', I.fwd > 0, 'fwd=' + I.fwd.toFixed(2));
+      pt(cv, 'pointermove', 14, 150, 300 - Rstick * 0.2);  // back inside DEAD, above MOVE_IN
+      ok('drifting back inside the dead zone does not stutter the walk', I.fwd > 0, 'fwd=' + I.fwd.toFixed(2));
+      pt(cv, 'pointermove', 14, 150, 300 - Rstick * 0.1);  // below the re-entry threshold
+      ok('the walk stops when the thumb really leaves the stick', I.fwd === 0 && I.back === 0, 'fwd=' + I.fwd.toFixed(2));
+      pt(cv, 'pointerup', 14, 150, 300 - Rstick * 0.1);
 
       // ---- look stick: turn, saturate, flick back ----
       drag(2, 700, 300, 760, 300);
@@ -84,8 +147,6 @@ window.addEventListener('load', () => {
       const shots1 = G.stats.shots;
       pt(cv, 'pointerdown', 6, 900, 250);
       await wait(60);
-      out.push('DBG tap: fire=' + I.fire + ' auto=' + I.autoFire + ' state=' + G.state +
-        ' w=' + G.player.w + ' ammo=' + JSON.stringify(G.player.ammo) + ' fireCd=' + G.player.fireCd.toFixed(2));
       pt(cv, 'pointerup', 6, 900, 250);
       await wait(1200);
       ok('look-half tap fires exactly once', G.stats.shots === shots1 + 1,
@@ -118,6 +179,17 @@ window.addEventListener('load', () => {
       pt(document.getElementById('gunCell'), 'pointerdown', 8, 0, 0);
       await wait(400);
       ok('GUN cell swaps weapon', G.player.w !== w0, 'w=' + G.player.w + ' was ' + w0);
+      // ---- the GUN cell has a cool-down: a brushed thumb is one swap, not two ----
+      const gun = document.getElementById('gunCell');
+      G.player.w = 0; G.player.owns.sg = true; G.player.owns.mg = false;
+      pt(gun, 'pointerdown', 9, 0, 0);
+      pt(gun, 'pointerdown', 10, 0, 0);
+      await wait(300);
+      ok('two quick taps on GUN swap once, not twice', G.player.w === 1, 'w=' + G.player.w);
+      await wait(300);
+      pt(gun, 'pointerdown', 11, 0, 0);
+      await wait(300);
+      ok('a tap after the cool-down swaps again', G.player.w === 0, 'w=' + G.player.w);
       pt(document.getElementById('pauseBtn'), 'pointerdown', 9, 0, 0);
       ok('PAUSE button pauses', G.state === 'pause', 'state=' + G.state);
       document.getElementById('ov').dispatchEvent(new MouseEvent('mousedown', { button: 0, bubbles: true }));
@@ -141,19 +213,26 @@ window.addEventListener('load', () => {
       ok('option buttons do not also resume the game', G.state === 'play', 'state=' + G.state);
 
       // ---- aim assist ----
-      let target = null, bd = 90;
-      for (const e of G.enemies) {
-        if (e.dead) continue;
-        const dx = e.x - G.player.x, dy = e.y - G.player.y, d2 = dx * dx + dy * dy;
-        if (d2 < bd && GH.game.hasLOS(G.player.x, G.player.y, e.x, e.y)) { bd = d2; target = e; }
-      }
+      const nearestVisible = () => {
+        let best = null, bd = 90;
+        for (const e of G.enemies) {
+          if (e.dead) continue;
+          const d2 = (e.x - G.player.x) ** 2 + (e.y - G.player.y) ** 2;
+          if (d2 < bd && GH.game.hasLOS(G.player.x, G.player.y, e.x, e.y)) { bd = d2; best = e; }
+        }
+        return best;
+      };
+      let target = nearestVisible();
       if (target) {
         toggle('aim');
         const ang = Math.atan2(target.y - G.player.y, target.x - G.player.x);
         G.player.a = ang + 0.6;                       // start ~34 deg off target
         await wait(700);
-        let diff = Math.abs(G.player.a - ang);
-        while (diff > Math.PI) diff = Math.abs(diff - 2 * Math.PI);
+        // measure against the target as it is now: enemies chase, so the bearing
+        // captured before the wait is already stale by the time the assist closes in
+        const live = nearestVisible();
+        let diff = live ? Math.abs(norm(Math.atan2(live.y - G.player.y, live.x - G.player.x) - G.player.a))
+                        : Math.abs(norm(G.player.a - ang));
         ok('aim assist turns toward a visible enemy', diff < 0.4, 'off by ' + diff.toFixed(2) + ' rad');
         toggle('aim');
         ok('aim assist is opt-in and off again', I.aim === false, 'aim=' + I.aim);
@@ -174,6 +253,46 @@ window.addEventListener('load', () => {
       ok('look sensitivity changes the turn rate', turnHigh > turnLow + 0.2,
         'high=' + turnHigh.toFixed(2) + ' low=' + turnLow.toFixed(2));
       ok('sensitivity cycles back to the default', readPrefs().sens === 'med', 'sens=' + readPrefs().sens);
+
+      // ---- the look stick's response curve ----
+      drag(21, 700, 300, 712, 300);
+      const curvedTurn = I.turn;
+      pt(cv, 'pointerup', 21, 712, 300);
+      ok('a light drag on the curved stick turns less than a linear stick would',
+        curvedTurn > 0.05 && curvedTurn < 0.2, 'turn=' + curvedTurn.toFixed(3));
+      toggle('curve');
+      drag(22, 700, 300, 712, 300);
+      const linearTurn = I.turn;
+      pt(cv, 'pointerup', 22, 712, 300);
+      ok('LINEAR LOOK is the fallback for players who want raw stick input',
+        linearTurn > curvedTurn + 0.05, 'linear=' + linearTurn.toFixed(3) + ' curved=' + curvedTurn.toFixed(3));
+      ok('the curve pref is persisted', readPrefs().curve === 1, 'curve=' + readPrefs().curve);
+      toggle('curve');
+
+      // ---- aim assist blends with the stick instead of switching off ----
+      if (nearestVisible()) {
+        const runAssist = async (aimOn) => {
+          if (aimOn) toggle('aim');
+          const tgt = nearestVisible();
+          if (!tgt) return [0, false];
+          const ang = Math.atan2(tgt.y - G.player.y, tgt.x - G.player.x);
+          const a0 = ang + 0.6;                 // the target sits 0.6 rad off the heading
+          G.player.a = a0;
+          drag(24, 700, 300, 710, 300);         // a light stick drag AWAY from the target
+          await wait(600);
+          const marked = document.getElementById('lookStick').classList.contains('assist');
+          pt(cv, 'pointerup', 24, 710, 300);
+          const delta = norm(G.player.a - a0);
+          if (aimOn) toggle('aim');
+          return [delta, marked];
+        };
+        const stickOnly = await runAssist(false);
+        const blended = await runAssist(true);
+        ok('aim assist still engages while the look stick is held',
+          blended[0] < stickOnly[0] - 0.2,
+          'stick alone turned ' + stickOnly[0].toFixed(2) + ' rad away from the target, blended turned ' + blended[0].toFixed(2));
+        ok('the assist marks itself while it is pulling', blended[1], 'look stick had no assist ring');
+      }
 
       // ---- one-thumb mode ----
       toggle('mode');
