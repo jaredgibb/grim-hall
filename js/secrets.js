@@ -323,23 +323,35 @@
         for (let a = 1; a <= 8 && rockAt(g, x + dx * a, y + dy * a); a++) run++;
         if (run < 3) continue;
         for (const chain of [run >= 7, false]) {
-          const cells = wingCells(x, y, dx, dy, chain);
-          if (!sealedWing(g, cells, allow)) continue;
-          // the panels must sit flush in a continuous wall, not as a lone block
-          const panels = cells.filter(c => c[2] === 'W');
+          const base = wingCells(x, y, dx, dy, chain);
+          const hatch = base.find(c => c[2] === 'E');
           const ax = dy, ay = dx;
-          let flush = true;
-          for (const [px, py] of panels)
-            for (const s of [-1, 1])
-              if (!rockAt(g, px + ax * s, py + ay * s)) { flush = false; break; }
-          if (!flush) continue;
-          cands.push({ x, y, dx, dy, chain, cells });
+          // The elevator tiles (floor code 006b) come in clusters in the originals:
+          // of the 267 elevator squares in the 60 episode maps 231 sit alone, 24 in
+          // pairs and 12 in threes. A one-square manhole is authentic, but a two- or
+          // three-square car reads better, so widen it wherever the rock seals it.
+          for (const extra of [[], [-1], [-1, 1]]) {
+            const cells = base.slice();
+            for (const b of extra) {
+              const cx = hatch[0] + ax * b, cy = hatch[1] + ay * b;
+              if (rockAt(g, cx, cy)) cells.push([cx, cy, 'E']);
+            }
+            if (!sealedWing(g, cells, allow)) continue;
+            // the panels must sit flush in a continuous wall, not as a lone block
+            const panels = cells.filter(c => c[2] === 'W');
+            let flush = true;
+            for (const [px, py] of panels)
+              for (const s of [-1, 1])
+                if (!rockAt(g, px + ax * s, py + ay * s)) { flush = false; break; }
+            if (!flush) continue;
+            cands.push({ x, y, dx, dy, chain, cells, car: extra.length + 1 });
+          }
           if (chain) break;                        // a chain is worth more than a car
         }
       }
     }
     if (!cands.length) return null;
-    cands.sort((a, b) => (b.chain - a.chain) || (b.cells.length - a.cells.length));
+    cands.sort((a, b) => (b.chain - a.chain) || (b.car - a.car) || (b.cells.length - a.cells.length));
     const w = cands[0];
     for (const [x, y, ch] of w.cells) g[y][x] = ch;
     for (const [x, y, ch] of w.cells) {
@@ -351,14 +363,14 @@
         }
       }
     }
-    const hatch = w.cells.find(c => c[2] === 'E');
+    const hatch = w.cells.filter(c => c[2] === 'E');
     vault.cells.push(...w.cells.filter(c => c[2] !== 'W').map(c => [c[0], c[1]]));
     // both panels of a chain shove along the same axis, in the same direction
     for (const [px, py] of w.cells.filter(c => c[2] === 'W'))
       vault.panels.push([px, py, w.dx, w.dy]);
     vault.chain = !!w.chain;
-    vault.elevator = { x: hatch[0], y: hatch[1], level: target, to: target,
-                       vault: vault.id, chain: !!w.chain };
+    vault.elevator = { x: hatch[0][0], y: hatch[0][1], cells: hatch.map(c => [c[0], c[1]]),
+                       level: target, to: target, vault: vault.id, chain: !!w.chain };
     return vault.elevator;
   }
 

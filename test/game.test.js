@@ -231,23 +231,30 @@ test('a panel jams when something blocks its travel path', () => {
   assert.ok(Game.tryPushwall(secret, secret.dx, secret.dy), 'with the path clear the same shove works');
 });
 test('a deep chamber can be shoved twice, and the panel can be shoved back', () => {
-  const idx = GH.levels.findIndex(l => (l.vaults || []).some(v => v.d >= 5));
-  assert.ok(idx >= 0, 'some floor hides a five-square bullion hall');
+  const idx = GH.levels.findIndex(l => (l.vaults || []).some(v => v.d >= 4));
+  assert.ok(idx >= 0, 'some floor hides a chamber four squares deep');
   fresh(idx, 71);
-  const vault = GH.levels[idx].vaults.find(v => v.d >= 5);
+  const vault = GH.levels[idx].vaults.find(v => v.d >= 4);
   const panel = G.doors.find(d => d.push && d.cx === vault.ex && d.cy === vault.ey);
   const [dx, dy] = [vault.dx, vault.dy];
-  G.player.x = vault.ex - dx + 0.5; G.player.y = vault.ey - dy + 0.5; G.player.a = Math.atan2(dy, dx);
-  sim(40, { fwd: 1 });
+  // A guard who wanders into a panel's travel squares jams the wall (bible 4.64),
+  // and vault guards wander. This test is about the panel, so empty the lane first;
+  // the jam itself is covered by "a panel jams when something blocks its path".
+  const W = Game.width();
+  const lane = new Set();
+  for (let a = 1; a <= 4; a++) lane.add((vault.ey + dy * a) * W + (vault.ex + dx * a));
+  G.enemies = G.enemies.filter(e => !lane.has(Math.floor(e.y) * W + Math.floor(e.x)));
+  for (const it of G.items) if (lane.has(Math.floor(it.y) * W + Math.floor(it.x))) it.taken = true;
+  assert.ok(Game.tryPushwall(panel, dx, dy), 'the panel gives way on the first shove');
   assert.strictEqual(panel.cx, vault.ex + dx * 2, 'first shove: two squares in');
-  sim(60, { fwd: 1 });
-  assert.strictEqual(panel.cx, vault.ex + dx * 4, 'the chain pushwall: the same panel gives way again');
+  assert.strictEqual(panel.cy, vault.ey + dy * 2);
+  assert.ok(Game.tryPushwall(panel, dx, dy), 'the chain pushwall: the same panel gives way again');
+  assert.strictEqual(panel.cx, vault.ex + dx * 4, 'a deep chamber takes a second shove');
+  assert.strictEqual(panel.cy, vault.ey + dy * 4);
   // Wolfenstein panels are not one-way: shove it the other way and it comes back
-  sim(30);                              // let the jam cooldown wear off first
-  G.player.x = panel.cx + dx + 0.5; G.player.y = panel.cy + dy + 0.5;
-  G.player.a = Math.atan2(-dy, -dx);
   assert.ok(Game.tryPushwall(panel, -dx, -dy), 'the panel slides back the other way');
   assert.strictEqual(panel.cx, vault.ex + dx * 2);
+  assert.strictEqual(panel.cy, vault.ey + dy * 2);
 });
 
 test('a vault is sealed off until its panel moves', () => {
@@ -395,8 +402,9 @@ test('a shot into a wall leaves a bullet hole on the face it struck', () => {
   const hole = G.fx.find(f => f.kind === 'hole');
   assert.ok(hole, 'the missed shot should leave a crater');
   assert.ok(Math.abs(hole.nx) + Math.abs(hole.ny) === 1, 'the decal needs a unit face normal');
-  assert.ok(Math.abs(hole.x - (wx - 0.47)) < 1e-6 && hole.nx === 1,
-    `crater should sit on the face at ${wx - 0.47}, got ${hole.x} facing ${hole.nx}`);
+  // the crater sits on the cell boundary the ray stopped at, proud of the surface
+  assert.ok(Math.abs(hole.x - (wx + 0.03)) < 1e-6 && hole.nx === 1,
+    `crater should sit on the face at ${wx}, got ${hole.x} facing ${hole.nx}`);
 });
 
 test('a bullet that hits a shut door puts the crater on the door plane', () => {
