@@ -28,7 +28,8 @@ function fresh(level = 0, seed = 1234) {
 // tests below find their own landmarks rather than trusting fixed coordinates.
 function openBlock(w = 4, h = 3) {          // a clear rectangle of walkable floor
   const MAP = Game.grid(), W = Game.width(), H = Game.height();
-  const open = (x, y) => x >= 1 && y >= 1 && x < W - 1 && y < H - 1 && !'#TW~'.includes(MAP[y][x]);
+  // doors count as solid until they slide open, so a "clear" block has none in it
+  const open = (x, y) => x >= 1 && y >= 1 && x < W - 1 && y < H - 1 && !'#TW~D'.includes(MAP[y][x]);
   for (let y = 1; y + h <= H - 1; y++)
     for (let x = 1; x + w <= W - 1; x++) {
       let ok = true;
@@ -43,6 +44,16 @@ function wallFace() {                        // floor cell with masonry directly
   for (let y = 1; y < H - 1; y++)
     for (let x = 2; x < W - 1; x++)
       if (MAP[y][x] === '.' && '#T~'.includes(MAP[y][x - 1])) return [x, y];
+  return null;
+}
+function openDoor() {                        // a shut door with clear ground north and south
+  const MAP = Game.grid();
+  const solid = c => '#T~W'.includes(c);
+  for (const d of G.doors) {
+    if (d.push) continue;
+    if (solid(MAP[d.cy][d.cx - 1]) && solid(MAP[d.cy][d.cx + 1]) &&
+        !solid(MAP[d.cy - 1][d.cx]) && !solid(MAP[d.cy + 1][d.cx])) return d;
+  }
   return null;
 }
 function shore() {                            // [dryX, dryY, wetX, wetY] in a row
@@ -147,11 +158,18 @@ test('rays stop at walls', () => {
 
 test('gunfire alerts enemies in earshot', () => {
   fresh(0, 11);
-  const far = G.enemies.find(e => Math.hypot(e.x - G.player.x, e.y - G.player.y) > 8);
-  assert.ok(far, 'the level has a far enemy');
-  assert.strictEqual(far.mode, 'wander');
+  // bible 4.42: a shot carries to every guard inside the radius, not just the
+  // nearest one. The vault generator moves things around, so the test finds its
+  // own earshot guard instead of trusting a fixed coordinate.
+  const near = G.enemies.find(e => !e.dead && !e.deaf &&
+    Math.hypot(e.x - G.player.x, e.y - G.player.y) < GH.tune.gunAlarmRadius);
+  assert.ok(near, 'the level has a guard in earshot');
+  assert.strictEqual(near.mode, 'wander');
   Game.tryFire();
-  assert.strictEqual(far.mode, 'chase', 'gunshot should alarm enemies in earshot');
+  assert.strictEqual(near.mode, 'chase', 'gunshot should alarm enemies in earshot');
+  const outOfRange = G.enemies.find(e => !e.dead && !e.deaf &&
+    Math.hypot(e.x - G.player.x, e.y - G.player.y) > GH.tune.gunAlarmRadius);
+  if (outOfRange) assert.strictEqual(outOfRange.mode, 'wander', 'a guard outside earshot should not hear it');
 });
 
 test('clearing the level opens the exit and stepping on it wins', () => {
@@ -225,6 +243,7 @@ test('a deep chamber can be shoved twice, and the panel can be shoved back', () 
   sim(60, { fwd: 1 });
   assert.strictEqual(panel.cx, vault.ex + dx * 4, 'the chain pushwall: the same panel gives way again');
   // Wolfenstein panels are not one-way: shove it the other way and it comes back
+  sim(30);                              // let the jam cooldown wear off first
   G.player.x = panel.cx + dx + 0.5; G.player.y = panel.cy + dy + 0.5;
   G.player.a = Math.atan2(-dy, -dx);
   assert.ok(Game.tryPushwall(panel, -dx, -dy), 'the panel slides back the other way');
@@ -284,20 +303,28 @@ test('a level can override any tuning value', () => {
   assert.strictEqual(Game.tune().torchCount, GH.tune.torchCount, 'levels without overrides use the base');
 });
 
-test('nextLevel cycles through the levels', () => {
+test('nextLevel cycles through the floors, skipping the secret one', () => {
   fresh(0, 3);
-  for (let i = 1; i < GH.levels.length; i++) {
-    assert.strictEqual(Game.nextLevel(), i, `level ${i} should follow level ${i - 1}`);
+  // Wolfenstein's secret floor is not part of the rotation: it is reached only
+  // by riding the elevator, so nextLevel walks past it (bible 4.8).
+  const rotation = GH.levels.map((_, i) => i).filter(i => !GH.levels[i].secret);
+  // starting on floor 0 the rotation visits every normal floor in order, wraps
+  // past the secret one, and comes back to 0
+  const seq = rotation.filter(i => i !== 0).concat([0]);
+  for (const i of seq) {
+    assert.strictEqual(Game.nextLevel(), i, `level ${i} should follow the previous normal floor`);
     assert.strictEqual(G.level, i);
   }
-  assert.strictEqual(Game.nextLevel(), 0, 'the level list wraps around');
+  assert.strictEqual(Game.nextLevel(), seq[0], 'the level list wraps around');
 });
 
 test('overlapping enemies are pushed apart without tunneling walls', () => {
   fresh(0, 21);
   const room = G.enemies.slice(0, 6);
   // jam them into one cell in the middle of an open hall, then let separation work
-  const spot = { x: 5.5, y: 12.5 };
+  const block = openBlock(6, 4);
+  assert.ok(block, 'the level has an open hall to work in');
+  const spot = { x: block.x, y: block.y };
   for (const e of room) { e.x = spot.x; e.y = spot.y; e.dead = false; }
   for (let i = 0; i < 100; i++) Game.separateEnemies();
   for (let i = 0; i < room.length; i++) {
@@ -336,8 +363,10 @@ test('a firing enemy lights a muzzle flash that decays', () => {
   fresh(0, 31);
   const e = G.enemies.find(x => !x.def.charge && !x.def.proj);
   assert.ok(e, 'the level has a hitscan enemy');
-  G.player.x = 5.5; G.player.y = 12.5;
-  e.x = 8.5; e.y = 12.5; e.mode = 'chase'; e.cd = 0; e.mz = 0;
+  const block = openBlock(6, 3);
+  assert.ok(block, 'the level has an open hall to stage the duel in');
+  G.player.x = block.cx + 0.5; G.player.y = block.cy + 1.5;
+  e.x = block.cx + 3.5; e.y = block.cy + 1.5; e.mode = 'chase'; e.cd = 0; e.mz = 0;
   Game.update(DT);
   assert.ok(e.mz > 0, 'the shot should leave a muzzle flash behind');
   for (let i = 0; i < 12; i++) Game.update(DT);   // 0.2 s
@@ -346,34 +375,42 @@ test('a firing enemy lights a muzzle flash that decays', () => {
 
 test('rayHit reports the wall cell and the face the ray entered', () => {
   fresh(0, 5);
-  const hit = Game.rayHit(5.5, 12.5, -1, 0);
-  assert.strictEqual(hit.cx, 0, 'the ray ends in the outer wall cell');
-  assert.strictEqual(hit.cy, 12);
+  const [wx, wy] = wallFace();                 // standing on floor with masonry due west
+  assert.ok(wx, 'the level has a wall to shoot at');
+  const hit = Game.rayHit(wx + 0.5, wy + 0.5, -1, 0);
+  assert.strictEqual(hit.cx, wx - 1, 'the ray ends in the wall cell');
+  assert.strictEqual(hit.cy, wy);
   assert.strictEqual(hit.nx, 1, 'the face it entered points back east');
-  assert.ok(Math.abs(hit.d - 4.5) < 1e-9, `distance should be 4.5, got ${hit.d}`);
+  assert.ok(Math.abs(hit.d - 0.5) < 1e-9, `distance should be 0.5, got ${hit.d}`);
 });
 
 test('a shot into a wall leaves a bullet hole on the face it struck', () => {
   fresh(0, 5);
+  const [wx, wy] = wallFace();
+  assert.ok(wx, 'the level has a wall to shoot at');
   const p = G.player;
-  p.x = 5.5; p.y = 12.5; p.a = Math.PI;   // due west, straight into the outer wall
+  p.x = wx + 0.5; p.y = wy + 0.5; p.a = Math.PI;   // due west, straight into the masonry
   p.fireCd = 0;
   Game.tryFire();
   const hole = G.fx.find(f => f.kind === 'hole');
   assert.ok(hole, 'the missed shot should leave a crater');
   assert.ok(Math.abs(hole.nx) + Math.abs(hole.ny) === 1, 'the decal needs a unit face normal');
-  assert.ok(Math.abs(hole.x - 1.03) < 1e-6 && hole.nx === 1, `crater at ${hole.x} facing ${hole.nx}`);
+  assert.ok(Math.abs(hole.x - (wx - 0.47)) < 1e-6 && hole.nx === 1,
+    `crater should sit on the face at ${wx - 0.47}, got ${hole.x} facing ${hole.nx}`);
 });
 
 test('a bullet that hits a shut door puts the crater on the door plane', () => {
   fresh(0, 11);
+  const door = openDoor();
+  assert.ok(door, 'the level has a door with clear ground on both sides');
   const p = G.player;
-  p.x = 3.5; p.y = 5.5; p.a = -Math.PI / 2;   // due north, straight at the shut door
+  p.x = door.cx + 0.5; p.y = door.cy + 1.5; p.a = -Math.PI / 2;   // due north, at the shut door
   p.fireCd = 0;
   Game.tryFire();
   const hole = G.fx.find(f => f.kind === 'hole');
   assert.ok(hole, 'the door should take the hit');
-  assert.ok(Math.abs(hole.y - 4.53) < 1e-6, `crater should sit on the door plane, got y=${hole.y}`);
+  assert.ok(Math.abs(hole.y - (door.cy + 0.53)) < 1e-6,
+    `crater should sit on the door plane, got y=${hole.y}`);
   assert.strictEqual(hole.ny, 1, 'the face points back at the shooter');
 });
 
@@ -417,27 +454,31 @@ test('shallow water is open ground that you wade, not a wall', () => {
 
 test('wading is slower than walking on dry stone', () => {
   fresh(14, 7);
-  const [wx, wy] = Game.waterCells()[0];
+  const [dryX, dryY, wetX, wetY] = shore();
+  assert.ok(dryX, 'the sunken quarry has a shoreline to measure against');
   const step = 0.4;
-  const wet = { x: wx + 0.2, y: wy + 0.5 };
-  const dry = { x: 1.2, y: wy + 0.5 };
-  assert.ok(!Game.inWater(dry.x, dry.y), 'the comparison cell is dry');
+  const wet = { x: wetX + 0.2, y: wetY + 0.5 };
+  const dry = { x: dryX + 0.2, y: dryY + 0.5 };
+  assert.ok(Game.inWater(wet.x, wet.y), 'the wet figure starts in the shallows');
+  assert.ok(!Game.inWater(dry.x, dry.y), 'the comparison figure is dry');
   Game.moveEnt(wet, step, 0, GH.tune.playerR);
   Game.moveEnt(dry, step, 0, GH.tune.playerR);
-  const waded = wet.x - (wx + 0.2), walked = dry.x - 1.2;
+  const waded = wet.x - (wetX + 0.2), walked = dry.x - (dryX + 0.2);
   assert.ok(Math.abs(waded - step * GH.tune.waterSlow) < 1e-9, `waded ${waded}, expected ${step * GH.tune.waterSlow}`);
   assert.ok(Math.abs(walked - step) < 1e-9, `walked ${walked}`);
 });
 
 test('stepping into the water makes a splash', () => {
   fresh(14, 9);
+  const [dryX, dryY, wetX, wetY] = shore();
+  assert.ok(dryX, 'the sunken quarry has a shoreline');
   G.fx.length = 0;
-  const e = { x: 6.5, y: 7.5, hp: GH.enemy.g.hp, def: GH.enemy.g, dead: false };
-  assert.ok(!Game.inWater(e.x, e.y), 'the grunt starts on dry planking');
+  const e = { x: dryX + 0.5, y: dryY + 0.5, hp: GH.enemy.g.hp, def: GH.enemy.g, dead: false };
+  assert.ok(!Game.inWater(e.x, e.y), 'the grunt starts on dry stone');
   Game.moveEnt(e, 1.4, 0, GH.enemy.g.r * 0.9);
   assert.ok(Game.inWater(e.x, e.y), 'the grunt waded into the basin');
   assert.ok(G.fx.some(f => f.kind === 'splash'), 'entering the water made a splash');
-  const dry = { x: 1.5, y: 7.5, hp: 22, def: GH.enemy.g };
+  const dry = { x: dryX + 0.2, y: dryY + 0.5, hp: 22, def: GH.enemy.g };
   G.fx.length = 0;
   Game.moveEnt(dry, 0.4, 0, GH.enemy.g.r * 0.9);
   assert.strictEqual(G.fx.filter(f => f.kind === 'splash').length, 0, 'walking on stone splashes nothing');
@@ -468,9 +509,11 @@ test('a shot that lands in the shallows leaves a tracer and a splash', () => {
 test('a wounded enemy limps, a healthy one does not', () => {
   const run = hp => {
     fresh(0, 41);
+    const block = openBlock(7, 5);
+    assert.ok(block, 'the level has an open hall to walk in');
     const e = G.enemies[0];
     G.enemies.length = 1;
-    e.x = 5.5; e.y = 12.5; e.hp = hp; e.mode = 'wander'; e.wt = 99; e.wa = 0;
+    e.x = block.x; e.y = block.y; e.hp = hp; e.mode = 'wander'; e.wt = 99; e.wa = 0;
     e.moving = true; e.flinch = 0;
     const x0 = e.x, y0 = e.y;
     sim(60, {});

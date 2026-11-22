@@ -175,7 +175,7 @@
     const i = idx(cx, cy);
     if (solid[i] || doorAt[i]) return false;
     for (const e of G.enemies)
-      if (!e.dead && Math.floor(e.x) === cx && Math.floor(e.y) === cy) return false;
+      if (Math.floor(e.x) === cx && Math.floor(e.y) === cy && (!e.dead || e.corpse > 0)) return false;
     for (const it of G.items)
       if (!it.taken && Math.floor(it.x) === cx && Math.floor(it.y) === cy) return false;
     return true;
@@ -194,9 +194,18 @@
   // clear. Anything in the path - a guard, a corpse, a prop, a doorway - jams it,
   // and the design bible is blunt about it: never put anything the player needs
   // in a panel's travel path, because a jammed wall reads as a broken map.
-  function tryPushwall(d, ax, ay) {
+  function tryPushwall(d, ax, ay, depth = 0) {
     if (!d.push) return false;
     const cx = d.cx, cy = d.cy;
+    // The chain pushwall (bible 4.62): a shoving panel shoves the panel in front
+    // of it, which is how a wall that stuck gets freed - and how id built the
+    // elevator chain in the first level of every episode.
+    const ahead = (cx + ax >= 0 && cy + ay >= 0 && cx + ax < W && cy + ay < H)
+      ? doorAt[idx(cx + ax, cy + ay)] : null;
+    if (ahead && ahead.push && ahead !== d && depth < 3 && !tryPushwall(ahead, ax, ay, depth + 1)) {
+      if (d.jamCd <= 0) { AUDIO.jam(); d.jamCd = 0.4; }
+      return false;
+    }
     if (!freeForWall(cx + ax, cy + ay) || !freeForWall(cx + ax * PUSH_SQUARES, cy + ay * PUSH_SQUARES)) {
       // a wall that will not move still thuds - once per shove, not every tick
       if (d.jamCd <= 0) { AUDIO.jam(); d.jamCd = 0.4; }
@@ -226,7 +235,7 @@
     G.level = levelIdx;
     TUNE = level.tune ? Object.assign({}, NS.tune, level.tune) : NS.tune;
     AUDIO = NS.sound || SILENT;
-    grid = level.map; W = grid[0].length; H = grid.length;
+    grid = level.map.slice(); W = grid[0].length; H = grid.length;
     solid = new Uint8Array(W * H);
     water = new Uint8Array(W * H);
     doorAt = new Array(W * H).fill(null);
@@ -251,16 +260,19 @@
         else if (c === 'D' || c === 'W') {
           const dr = { cx: x, cy: y, open: 0, push: c === 'W', found: false, dx: 0, dy: 0, vault: -1, jamCd: 0, hint: false };
           if (dr.push) {
-            const v = VAULTS.find(v => v.ex === x && v.ey === y);
-            if (v) { dr.dx = v.dx; dr.dy = v.dy; dr.vault = v.id; dr.hint = !!v.hint; }
-            else { const dir = slideDir(x, y); if (dir) { dr.dx = dir[0]; dr.dy = dir[1]; } }
+            const v = VAULTS.find(v => v.panels.some(([px, py]) => px === x && py === y));
+            if (v) {
+              const p = v.panels.find(([px, py]) => px === x && py === y);
+              dr.dx = p[2] != null ? p[2] : v.dx; dr.dy = p[3] != null ? p[3] : v.dy;
+              dr.vault = v.id; dr.hint = !!v.hint; dr.chain = !!v.chain;
+            } else { const dir = slideDir(x, y); if (dir) { dr.dx = dir[0]; dr.dy = dir[1]; } }
           }
           G.doors.push(dr); doorAt[i] = dr; solid[i] = 1;      // shut until it slides open
         } else if (c === 'X') G.exit = { x: x + 0.5, y: y + 0.5, active: false };
         else if (ENEMY[c]) {
           const d = ENEMY[c], vid = vaultAt(x, y);
           G.enemies.push({ t: c, def: d, x: x + 0.5, y: y + 0.5, hp: d.hp, a: rng() * TAU,
-            cd: 1 + rng(), flash: 0, mz: 0, dead: false, deadT: 0, wa: rng() * TAU, wt: 0, anim: rng() * 9,
+            cd: 1 + rng(), flash: 0, mz: 0, dead: false, deadT: 0, corpse: 0, wa: rng() * TAU, wt: 0, anim: rng() * 9,
             mode: 'wander', lx: 0, ly: 0, flinch: 0, strafe: 1, stT: 0, tele: 0, charging: 0, moving: false,
             deaf: vid >= 0, vault: vid });
         } else if ('12abhkH'.includes(c)) {
@@ -333,7 +345,7 @@
 
   function killEnemy(e) {
     if (e.dead) return;
-    e.dead = true; e.deadT = 0.6;
+    e.dead = true; e.deadT = 0.6; e.corpse = TUNE.splatLife;
     G.kills++; G.score += TUNE.scorePerKill;
     G.fx.push({ kind: 'splat', x: e.x, y: e.y, t: TUNE.splatLife, max: TUNE.splatLife });
     G.fx.push({ kind: 'blood', x: e.x, y: e.y, t: 0.4, max: 0.4 });
@@ -503,7 +515,7 @@
   }
 
   function tickEnemy(e, dt) {
-    if (e.dead) { e.deadT -= dt; return; }
+    if (e.dead) { e.deadT -= dt; if (e.corpse > 0) e.corpse -= dt; return; }
     e.cd -= dt; e.flash -= dt; if (e.mz > 0) e.mz -= dt;
     if (e.flinch > 0) { e.flinch -= dt; return; }          // staggered by a bullet hit
     const p = G.player;

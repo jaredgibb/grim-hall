@@ -57,6 +57,7 @@ const GH = {
     strafeTimer: 0.7, strafeFar: 7, strafeNear: 4, strafeMinDist: 3,
     chargeCdExtra: 0.9,
     splatLife: 25, pickupRadius: 0.6,
+    gunAlarmRadius: 12,        // a gunshot alerts every enemy in earshot (bible 4.42)
     exitTouchDist: 0.7,
     winBonusTime: 500, winBonusPerSec: 5, winBonusHp: 5,
     boomRadius: 1.6, boomDamage: 14,
