@@ -15,3 +15,9 @@ Discovered from this codebase; dated so they can be pruned when stale.
   and assert the peak stays inside the assist's own clamp (0.4), plus that the heading ends
   aligned with a target in range. A single "it turned" check passes even when the assist
   is spinning. (2026-11-21)
+- Pushwall tests must clear the panel's travel lane before shoving: vault guards and props
+  wander into the two squares a panel needs to slide (`freeForWall` in js/game.js), so filter
+  `G.enemies` out of the lane and mark `G.items` taken along it (as the "deep chamber shove"
+  and "hatch stays sealed" tests in test/game.test.js do) or the assertion fails on a jam
+  rather than on the mechanic. The jam itself has its own test, so never rely on one to
+  prove a panel can slide. (2026-11-22)
