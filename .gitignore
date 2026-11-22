@@ -1,5 +1,6 @@
 .debug-*
 .geo-out.html
+tmp-*
 node_modules/
 .qwen/
 .wrangler/

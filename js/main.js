@@ -14,6 +14,8 @@ const Main = (() => {
   let guns, gunLight, flashMesh, muzzleLight, muzzlePos, exitMesh, exitLight, flashLight, eFlash;
   let torches = [], flames = [], cones = [], embers = [], coneGeo = null;
   let msgDiv, lastMini = 0, popDiv, popUntil = 0, lastKills = 0, dmgDiv;
+  let lastFaceSt = -1, lastFaceArt = null;   // the face is redrawn only when it changes
+  let lastBossPct = -1;                      // the boss bar is re-written only when it moves
   const Input = { fwd: 0, back: 0, left: 0, right: 0, turn: 0, fire: 0, fireEdge: 0, wantW: -1, sprint: 0, autoFire: 0, aim: 0 };
   // What the thumb or the arrow keys actually asked for. The aim assist writes
   // Input.turn on top of this, so it needs the stick's own value: reading Input.turn
@@ -23,7 +25,16 @@ const Main = (() => {
   NS.input = Input;      // game.js reads GH.input
   window.Input = Input;  // handy for debugging from the console
   const keys = {};
+  // ---- gamepad ----
+  // Standard mapping: left stick walks, right stick turns, RT fires, LB/RB cycle
+  // the guns, A confirms a panel, Start pauses. Additive - the keyboard and the
+  // thumb sticks keep working underneath it, and with no pad plugged in the poll
+  // is one early return.
+  let padIndex = null;
+  const padPrev = [];
+  const padState = { fwd: 0, back: 0, left: 0, right: 0, sprint: 0, turn: 0 };
   const WOUND_ON = !location.search.includes('nowound');   // A/B switch for wounded sprites
+  const AUTO_DBG = location.search.includes('auto');       // per-frame title readout, hoisted out of the loop
   // Touch device? Pointer-events alone are not enough: a laptop with a touchscreen
   // reports both. Coarse pointer is the honest signal, ?touch=1 forces it for tests.
   // Guarded because matchMedia/navigator are missing in the headless boot test.
@@ -35,7 +46,14 @@ const Main = (() => {
   // forced on is an assist some players cannot turn off.
   const prefs = (() => { try { return JSON.parse(localStorage.getItem('gh.touch') || '{}'); } catch (e) { return {}; } })();
   const savePrefs = () => { try { localStorage.setItem('gh.touch', JSON.stringify(prefs)); } catch (e) {} };
-  const TouchUI = { apply: () => {}, release: () => {}, update: () => {} };
+  // How far the player has gotten, and the best run on each floor. Same
+  // try/catch shape as the prefs reads: private mode and file:// both throw.
+  let prog = { unlocked: 0, best: {} };
+  const loadProgress = () => {
+    try { prog = NS.progress.load(localStorage, LEVELS); } catch (e) { prog = { unlocked: 0, best: {} }; }
+  };
+  const saveProgress = () => { try { NS.progress.save(localStorage, prog); } catch (e) {} };
+  const TouchUI = { apply: () => {}, release: () => {}, update: () => {}, held: () => false };
   NS.touch = TouchUI;   // the debug harness and console can reach the touch layer
   let lastHitDirT = 0;   // used to detect a *new* damage event for the haptic ping
 
@@ -74,6 +92,7 @@ const Main = (() => {
     bindInput();
     NS.onOverlay = showOverlay;   // the sim times the death/win panels (see update())
     syncExit();
+    loadProgress();
     showOverlay('title');
     let last = performance.now(), lastState = G.state;
     requestAnimationFrame(function loop(t) {
@@ -83,7 +102,8 @@ const Main = (() => {
       // A thumb resting on FIRE is not an edge. On a mouse you click again; on a
       // phone you just keep pushing, so a held trigger re-edges the semi-auto guns.
       if (Input.fire && Input.autoFire) Input.fireEdge = 1;
-      TouchUI.update();       // the sticks write their input first...
+      TouchUI.update(dt);     // the sticks write their input first...
+      pollPad();              // ...then the gamepad, before the assist blends
       aimAssist();            // ...so the assist can blend into what is left
       Game.update(dt);
       // a secret elevator carries the player down: the sim only flags the
@@ -91,6 +111,9 @@ const Main = (() => {
       if (G.gotoLevel != null && G.state === 'play') {
         const target = G.gotoLevel; G.gotoLevel = null;
         G.level = target;
+        // the entity maps are keyed by the old sim objects: without a sweep the
+        // previous floor's figures and pickups linger in the new hall as ghosts
+        clearEntities();
         Game.buildWorld(G.level);
         buildWorldMeshes();
         syncExit();
@@ -102,7 +125,7 @@ const Main = (() => {
       syncScene(dt, t / 1000);
       renderFrame(t / 1000);
       updateHUD(t / 1000);
-      if (location.search.includes('auto'))
+      if (AUTO_DBG)
         document.title = 'state=' + G.state + ' hp=' + Math.round(G.player.hp) + ' kills=' + G.kills + '/' + G.total +
           ' shots=' + G.stats.shots + ' hits=' + G.stats.hits +
           ' w=' + G.player.w + ' doorsOpen=' + G.doors.filter(d => d.open > 0.9).length + '/' + G.doors.length +
@@ -484,9 +507,19 @@ const Main = (() => {
       camera.add(gunLight);
     }
     if (guns) {
+      const mats = new Set();
       for (const g of guns) {
-        g.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+        g.traverse(o => {
+          if (o.geometry) o.geometry.dispose();
+          if (o.material) mats.add(o.material);
+        });
         camera.remove(g);
+      }
+      for (const m of mats) {
+        // gunTex clones the masonry maps per build: unlike the cached ART
+        // textures, those clones belong to this weapon set and die with it
+        for (const k of ['map', 'normalMap', 'roughnessMap']) if (m[k]) m[k].dispose();
+        m.dispose();
       }
     }
     const M = gunMaterials();
@@ -947,8 +980,12 @@ const Main = (() => {
     return m;
   }
   // torch pools, the player's own glow and the muzzle flash all push light onto a
-  // figure; this is the sum of them, in the billboard's own frame
+  // figure; this is the sum of them, in the billboard's own frame.
+  // One scratch result for every figure: the caller copies it into its uniform
+  // immediately, so nothing needs a fresh Vector3 per enemy per frame.
+  let lightOut = null;
   function lightDirAt(x, y, yaw) {
+    if (!lightOut) lightOut = { dir: new THREE.Vector3(), int: 0 };
     let lx = 0, ly = 0, sum = 0;
     const add = (dx, dy, w) => {
       const d = Math.hypot(dx, dy) || 1e-6;
@@ -966,10 +1003,9 @@ const Main = (() => {
     }
     // world XZ -> local: the quad's normal is (sin yaw, 0, cos yaw)
     const cx = Math.cos(yaw), sx = Math.sin(yaw);
-    return {
-      dir: new THREE.Vector3(lx * cx - ly * sx, 0.2, Math.max(lx * sx + ly * cx, 0.05)),
-      int: Math.max(0, Math.min(0.9, sum)),
-    };
+    lightOut.dir.set(lx * cx - ly * sx, 0.2, Math.max(lx * sx + ly * cx, 0.05));
+    lightOut.int = Math.max(0, Math.min(0.9, sum));
+    return lightOut;
   }
   // a flat quad on the floor under a billboard, so the figure is not floating
   let shadowGeo = null;
@@ -982,6 +1018,30 @@ const Main = (() => {
     m.position.y = 0.02;
     return m;
   }
+  // floor decals (corpses, blood, splash rings, bullet craters) share one unit
+  // plane scaled per instance, so a kill does not allocate geometry
+  let decalGeo = null;
+  function decalPlane() {
+    if (!decalGeo) decalGeo = new THREE.PlaneGeometry(1, 1);
+    return decalGeo;
+  }
+  // shared planes (billboard, shadow, decal) and three's internal sprite quad
+  // outlive any one entity: free only per-entity geometry and materials. The
+  // textures themselves belong to the cached ART set and stay.
+  function disposeEntity(o) {
+    o.traverse(c => {
+      if (c.geometry && !c.isSprite && c.geometry !== bbGeo && c.geometry !== shadowGeo && c.geometry !== decalGeo) c.geometry.dispose();
+      if (c.material) c.material.dispose();
+    });
+  }
+  function disposeFx(o) {
+    for (const m of [o.spr, o.line, o.ring, o.decal]) {
+      if (!m) continue;
+      scene.remove(m);
+      if (m.geometry && !m.isSprite && m.geometry !== decalGeo) m.geometry.dispose();
+      if (m.material) m.material.dispose();
+    }
+  }
   function syncEntities(dt, t) {
     // enemies
     for (const e of G.enemies) {
@@ -989,10 +1049,15 @@ const Main = (() => {
         // the collapse finished: the billboard is gone and the body stays on the
         // floor as a sprawled decal
         const gone = enemyObjs.get(e);
-        if (gone) { scene.remove(gone.grp); scene.remove(gone.shadow); enemyObjs.delete(e); }
+        if (gone) {
+          scene.remove(gone.grp); disposeEntity(gone.grp);
+          scene.remove(gone.shadow); disposeEntity(gone.shadow);
+          enemyObjs.delete(e);
+        }
         if (!corpseObjs.has(e)) {
-          const m = new THREE.Mesh(new THREE.PlaneGeometry(e.def.h * 1.05, e.def.h * 0.62),
+          const m = new THREE.Mesh(decalPlane(),
             new THREE.MeshStandardMaterial({ map: ART.corpses[e.t], transparent: true, roughness: 0.9, metalness: 0, depthWrite: false }));
+          m.scale.set(e.def.h * 1.05, e.def.h * 0.62, 1);
           m.rotation.x = -Math.PI / 2;
           m.rotation.z = e.a + (e.x * 7.31 % 1) * 0.9;
           m.position.set(e.x, 0.014, e.y);
@@ -1073,7 +1138,7 @@ const Main = (() => {
         scene.add(o);
         itemObjs.set(it, o);
       }
-      if (it.taken) { scene.remove(o); itemObjs.delete(it); continue; }
+      if (it.taken) { scene.remove(o); disposeEntity(o); itemObjs.delete(it); continue; }
       o.position.set(it.x, 0.28 + Math.sin(t * 3 + it.bob) * 0.06, it.y);
     }
     // projectiles
@@ -1084,7 +1149,7 @@ const Main = (() => {
       o.position.set(pr.x, 0.55, pr.y);
       seen.add(pr);
     }
-    for (const [pr, o] of projObjs) if (!seen.has(pr)) { scene.remove(o); projObjs.delete(pr); }
+    for (const [pr, o] of projObjs) if (!seen.has(pr)) { scene.remove(o); disposeEntity(o); projObjs.delete(pr); }
     // fx
     for (const f of G.fx) {
       let o = fxObjs.get(f);
@@ -1107,14 +1172,15 @@ const Main = (() => {
           o.spr.position.set(f.x, 0.7, f.y);
           scene.add(o.spr);
         } else if (f.kind === 'splat') {
-          const m = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.9),
+          const m = new THREE.Mesh(decalPlane(),
             new THREE.MeshBasicMaterial({ map: ART.splat, transparent: true, depthWrite: false }));
+          m.scale.set(0.9, 0.9, 1);
           m.rotation.x = -Math.PI / 2; m.rotation.z = Math.random() * 9;
           m.position.set(f.x, 0.012, f.y);
           scene.add(m);
           o = { f, line: m };
         } else if (f.kind === 'splash') {
-          const m = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 1.2),
+          const m = new THREE.Mesh(decalPlane(),
             new THREE.MeshBasicMaterial({ map: ART.splash, transparent: true, depthWrite: false }));
           m.rotation.x = -Math.PI / 2; m.rotation.z = Math.random() * 9;
           m.position.set(f.x, 0.06, f.y);
@@ -1123,8 +1189,9 @@ const Main = (() => {
         } else if (f.kind === 'hole') {
           // a bullet that missed lands in the masonry: a decal on the exact face
           // the ray struck, oriented by the face normal
-          const m = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.34),
+          const m = new THREE.Mesh(decalPlane(),
             new THREE.MeshBasicMaterial({ map: ART.hole, transparent: true, depthWrite: false }));
+          m.scale.set(0.34, 0.34, 1);
           m.position.set(f.x + f.nx * 0.03, 0.62, f.y + f.ny * 0.03);
           m.rotation.y = Math.atan2(f.nx, f.ny);
           scene.add(m);
@@ -1147,9 +1214,7 @@ const Main = (() => {
     const live = new Set(G.fx);
     for (const [f, o] of fxObjs) {
       if (live.has(f)) continue;
-      if (o.spr) scene.remove(o.spr);
-      if (o.line) scene.remove(o.line);
-      if (o.decal) scene.remove(o.decal);
+      disposeFx(o);
       fxObjs.delete(f);
     }
   }
@@ -1160,6 +1225,22 @@ const Main = (() => {
   }
   // ---- HUD ----
   const $ = id => document.getElementById(id);
+  const cv = () => renderer.domElement;
+  // The Overlord is the only enemy big enough to need its own bar. The sim
+  // already carries its hp; the renderer just mirrors it, and only re-writes the
+  // fill when the percentage actually moves (same trick as the face canvas).
+  function updateBossBar() {
+    const el = $('boss');
+    if (!el) return;
+    let o = null;
+    if (G.state === 'play')
+      for (const e of G.enemies) if (!e.dead && e.t === 'O') { o = e; break; }
+    if (!o) { el.classList.add('hidden'); lastBossPct = -1; return; }
+    el.classList.remove('hidden');
+    const pct = Math.max(0, Math.round(100 * o.hp / o.def.hp));
+    if (pct !== lastBossPct) { lastBossPct = pct; $('bossFill').style.width = pct + '%'; }
+    el.classList.toggle('wounded', Game.wounded(o));
+  }
   function updateHUD(t) {
     const p = G.player, w = WEAPONS[p.w];
     $('hHp').textContent = Math.ceil(p.hp);
@@ -1188,11 +1269,15 @@ const Main = (() => {
     if (w.ammo && p.ammo[w.ammo] <= 2 && G.state === 'play') ammoEl.style.color = (t % 0.5 < 0.25) ? '#ff4030' : '#ffd75e';
     else ammoEl.style.color = '';
     const st = p.hp > 75 ? 0 : p.hp > 50 ? 1 : p.hp > 30 ? 2 : p.hp > 12 ? 3 : 4;
-    const fg = $('face').getContext('2d');
-    fg.imageSmoothingEnabled = false;
-    fg.clearRect(0, 0, 48, 48);
-    fg.drawImage(ART.face[st].image, 0, 0);
+    if (st !== lastFaceSt || ART !== lastFaceArt) {
+      lastFaceSt = st; lastFaceArt = ART;
+      const fg = $('face').getContext('2d');
+      fg.imageSmoothingEnabled = false;
+      fg.clearRect(0, 0, 48, 48);
+      fg.drawImage(ART.face[st].image, 0, 0);
+    }
     $('vig').style.opacity = Math.min(1, G.dmgFlash + (p.hp < 30 ? (1 - p.hp / 30) * 0.35 * (0.6 + 0.4 * Math.sin(t * 6)) : 0));
+    updateBossBar();
     // The touch sticks are laid out against the HUD, so showing or hiding the
     // bar has to re-lay them out - otherwise the sticks end up buried under it.
     const hudHidden = G.state === 'title';
@@ -1264,6 +1349,63 @@ const Main = (() => {
     Input.turn = Math.max(-1, Math.min(1, stick + want));
     assistOn = true;
   }
+  // ---- gamepad polling ----
+  // Runs after the thumb sticks have written their input and before the assist
+  // blends, so the turn channel keeps its order: raw stick -> pad -> assist.
+  // The pad never reads Input.turn back, only what it put into setTurn.
+  // Neither device may clobber the other: the keyboard is re-derived from the
+  // held keys, and the thumb sticks are only overwritten while they are idle.
+  function blendInput() {
+    const thumb = TOUCH && TouchUI.held();
+    const keyTurn = (keys.arrowleft ? -1 : 0) + (keys.arrowright ? 1 : 0);
+    if (padState.turn || keyTurn || !thumb) setTurn(Math.max(-1, Math.min(1, padState.turn + keyTurn)));
+    Input.fwd = Math.max(padState.fwd, (keys.w || keys.arrowup) ? 1 : 0, thumb ? Input.fwd : 0);
+    Input.back = Math.max(padState.back, (keys.s || keys.arrowdown) ? 1 : 0, thumb ? Input.back : 0);
+    Input.left = Math.max(padState.left, keys.a ? 1 : 0, thumb ? Input.left : 0);
+    Input.right = Math.max(padState.right, keys.d ? 1 : 0, thumb ? Input.right : 0);
+    Input.sprint = Math.max(padState.sprint, keys.shift ? 1 : 0, thumb ? Input.sprint : 0);
+  }
+  const clearPad = () => {
+    padState.fwd = padState.back = padState.left = padState.right = padState.sprint = padState.turn = 0;
+    padPrev.length = 0;
+  };
+  function pollPad() {
+    if (padIndex === null || typeof navigator !== 'object' || !navigator.getGamepads) return;
+    const pads = navigator.getGamepads();
+    const pad = pads && pads[padIndex];
+    if (!pad) return;
+    const ax = pad.axes || [], btn = pad.buttons || [];
+    const down = i => !!(btn[i] && btn[i].pressed);
+    const edge = i => down(i) && !padPrev[i];
+
+    // left stick: analog walk with the same dead-zone shape as the thumb, sprint
+    // at full push
+    const mx = Math.abs(ax[0] || 0) > 0.2 ? ax[0] : 0;
+    const my = Math.abs(ax[1] || 0) > 0.2 ? ax[1] : 0;
+    const push = Math.min(1, Math.hypot(mx, my));
+    padState.fwd = my < 0 ? push : 0;
+    padState.back = my > 0 ? push : 0;
+    padState.right = mx > 0 ? push : 0;
+    padState.left = mx < 0 ? push : 0;
+    padState.sprint = Math.hypot(mx, my) >= 0.85 ? 1 : 0;
+
+    // right stick: turn through setTurn, never through Input.turn
+    const raw = Math.abs(ax[2] || 0) > 0.15 ? ax[2] : 0;
+    padState.turn = Math.sign(raw) * Math.min(1, Math.abs(raw) / 0.8);
+
+    blendInput();
+
+    // RT: a held trigger re-edges the semi-autos, exactly like a held FIRE pad.
+    if (down(7)) { Input.fire = 1; Input.fireEdge = 1; }
+    else if (padPrev[7]) Input.fire = 0;
+    if (edge(0)) {
+      if (G.state !== 'play') advance();
+      else { Input.fire = 1; Input.fireEdge = 1; }
+    }
+    if (edge(9)) { if (G.state === 'play') pauseGame(); else advance(); }
+    if (edge(4) || edge(5)) swapGun();
+    for (let i = 0; i < btn.length; i++) padPrev[i] = down(i);
+  }
   // ---- overlays ----
   function toggleMap() {
     G.mini = !G.mini;
@@ -1274,6 +1416,29 @@ const Main = (() => {
     if (G.state !== 'play') return;
     Input.fwd = Input.back = Input.left = Input.right = 0; setTurn(0); Input.sprint = Input.fire = 0;
     G.state = 'pause'; showOverlay('pause');
+  }
+  // Every panel leaves through this one door. Mouse, keyboard and gamepad all
+  // land here, so a panel can never be unreachable for one kind of player.
+  function advance() {
+    if (G.state === 'pause') {
+      G.state = 'play';
+      $('ov').classList.add('hidden');
+      if (cv().requestPointerLock) cv().requestPointerLock();
+      return;
+    }
+    if (G.state !== 'play') {
+      if (G.state === 'win') G.level = Game.nextIndex();   // cleared a hall -> next one, never the secret floor
+      startGame();
+    }
+  }
+  // Cycle to the next gun the player actually owns. Shared by the GUN cell, the
+  // keyboard and the gamepad's shoulder buttons.
+  function swapGun() {
+    const p = G.player;
+    for (let i = 1; i <= 3; i++) {
+      const w = (p.w + i) % 3;
+      if (w === 0 || (w === 1 && p.owns.sg) || (w === 2 && p.owns.mg)) { Input.wantW = w; break; }
+    }
   }
   // ---- touch option panel: every assist is opt-in and lives in one place ----
   let lastOverlay = 'title';
@@ -1319,57 +1484,96 @@ const Main = (() => {
     TouchUI.apply();
     refreshPanel();
   }
-  function statLine() {
+  function runStats() {
     const st = G.stats, acc = st.shots ? Math.round(100 * st.hits / st.shots) : 0;
     const t = Math.floor(G.time);
     let rank;
     if (G.kills >= G.total) rank = t < 90 ? 'HALLMASTER' : t < 150 ? 'SLAYER' : 'SURVIVOR';
     else rank = G.kills >= Math.ceil(G.total * 0.7) ? 'SO CLOSE' : 'FEED FOR THE HALL';
-    return 'score ' + G.score + ' &nbsp; time ' + Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0') +
-      ' &nbsp; accuracy ' + acc + '% (' + st.hits + '/' + st.shots + ')' +
-      ' &nbsp; secrets ' + G.secrets.found + '/' + G.secrets.total + '<br>rank: <b style="color:#ffd75e">' + rank + '</b>';
+    return { score: G.score, time: t, accuracy: acc, secrets: G.secrets.found, rank };
   }
+  function statLine() {
+    const s = runStats(), st = G.stats;
+    return 'score ' + s.score + ' &nbsp; time ' + Math.floor(s.time / 60) + ':' + String(s.time % 60).padStart(2, '0') +
+      ' &nbsp; accuracy ' + s.accuracy + '% (' + st.hits + '/' + st.shots + ')' +
+      ' &nbsp; secrets ' + s.secrets + '/' + G.secrets.total + '<br>rank: <b style="color:#ffd75e">' + s.rank + '</b>';
+  }
+  // The title screen doubles as the level select. The secret floor is
+  // deliberately absent from the row: it is earned through the elevator, not
+  // picked off a menu.
+  function levelRow() {
+    let html = '<div class="lvls" role="group" aria-label="Choose a floor">';
+    for (let i = 0; i < LEVELS.length; i++) {
+      if (LEVELS[i].secret) continue;
+      const open = i <= prog.unlocked;
+      html += '<button data-level="' + i + '"' + (open ? '' : ' disabled') +
+              (i === G.level ? ' class="sel" aria-current="true"' : '') +
+              ' aria-label="Floor ' + (i + 1) + (open ? '' : ' (locked)') + '">' + (i + 1) + '</button>';
+    }
+    html += '</div>';
+    const b = prog.best[G.level];
+    html += '<div class="best">' + (b
+      ? 'best on ' + LEVELS[G.level].name + ': ' + b.score + ' pts &middot; ' + b.rank +
+        ' &middot; ' + Math.floor(b.time / 60) + ':' + String(b.time % 60).padStart(2, '0') +
+        ' &middot; secrets ' + b.secrets
+      : 'no record on ' + LEVELS[G.level].name + ' yet') + '</div>';
+    return html;
+  }
+  const PANEL_LABEL = { title: 'Title screen', dead: 'You died', pause: 'Paused', win: 'Hall cleared' };
   function showOverlay(kind) {
     const ov = $('ov'), box = $('ovBox');
     lastOverlay = kind;
     ov.classList.remove('hidden');
+    box.setAttribute('aria-label', PANEL_LABEL[kind] || 'Game panel');
     if (kind === 'title') {
       box.innerHTML = '<h1>GRIM HALL</h1><h2>' + LEVELS[G.level].name + ' &mdash; level ' + (G.level + 1) + ' of ' + LEVELS.length + '</h2>' +
         '<div class="ctl"><b>WASD</b> move &nbsp; <b>Shift</b> sprint &nbsp; <b>mouse</b> look &nbsp; <b>click / space</b> fire<br>' +
-        '<b>1 2 3</b> weapons &nbsp; <b>M</b> map &nbsp; new guns auto-equip &nbsp; ESC pauses<br>' +
+        '<b>1 2 3</b> weapons &nbsp; <b>M</b> map &nbsp; new guns auto-equip &nbsp; ESC pauses &nbsp; <b>Enter</b> starts<br>' +
         (TOUCH ? '<b>left thumb</b> drag to walk &amp; strafe &nbsp; <b>right thumb</b> drag to turn &nbsp; <b>FIRE</b> hold to shoot<br>'
                : '<b>touch</b> on a phone: two-thumb sticks appear at the bottom of the screen<br>') +
+        (padIndex !== null ? '<b>gamepad</b> left stick walk &nbsp; right stick turn &nbsp; <b>RT</b> fire &nbsp; <b>A</b> start<br>' : '') +
         'kill all ' + G.total + ' horrors, then reach the green <b>EXIT</b> &mdash; a secret hides in these walls</div>' +
+        levelRow() +
         optPanel() +
-        '<div class="go">[ CLICK TO ENTER ]</div>';
+        '<div class="go">[ CLICK OR PRESS ENTER ]</div>';
     } else if (kind === 'dead') {
       box.innerHTML = '<h1 style="color:#a00">YOU DIED</h1><h2>the hall keeps you</h2>' +
         '<div class="stat">' + statLine() + '</div>' +
-        '<div class="go">[ CLICK TO TRY AGAIN ]</div>';
+        '<div class="go">[ CLICK OR PRESS ENTER ]</div>';
     } else if (kind === 'pause') {
       box.innerHTML = '<h1 style="font-size:34px">PAUSED</h1>' + optPanel() +
-        '<div class="go">[ CLICK TO RESUME ]</div>';
+        '<div class="go">[ CLICK OR PRESS ENTER ]</div>';
     } else if (kind === 'win') {
+      // The win panel is the sim-timed, deterministic moment to bank the run.
+      // recordWin is idempotent, so refreshPanel re-rendering it is harmless.
+      prog = NS.progress.recordWin(prog, G.level, runStats(), LEVELS);
+      saveProgress();
       box.innerHTML = '<h1 style="color:#3f6">HALL CLEARED</h1><h2>' + LEVELS[G.level].name +
-        ' is empty &mdash; on to ' + LEVELS[(G.level + 1) % LEVELS.length].name + '</h2>' +
+        ' is empty &mdash; on to ' + LEVELS[Game.nextIndex()].name + '</h2>' +
         '<div class="stat">' + statLine() + ' &nbsp; hp left ' + Math.ceil(G.player.hp) + '</div>' +
-        '<div class="go">[ CLICK TO PLAY AGAIN ]</div>';
+        '<div class="go">[ CLICK OR PRESS ENTER ]</div>';
     }
   }
   function clearEntities() {
-    for (const [, o] of enemyObjs) { scene.remove(o.grp); if (o.shadow) scene.remove(o.shadow); }
-    for (const m of corpseObjs.values()) scene.remove(m);
+    for (const [, o] of enemyObjs) {
+      scene.remove(o.grp); disposeEntity(o.grp);
+      if (o.shadow) { scene.remove(o.shadow); disposeEntity(o.shadow); }
+    }
+    for (const m of corpseObjs.values()) { scene.remove(m); disposeEntity(m); }
     corpseObjs.clear();
-    for (const [, o] of itemObjs) scene.remove(o);
-    for (const [, o] of projObjs) scene.remove(o);
-    for (const [, o] of fxObjs) { if (o.spr) scene.remove(o.spr); if (o.line) scene.remove(o.line); if (o.decal) scene.remove(o.decal); }
+    for (const [, o] of itemObjs) { scene.remove(o); disposeEntity(o); }
+    for (const [, o] of projObjs) { scene.remove(o); disposeEntity(o); }
+    for (const [, o] of fxObjs) disposeFx(o);
     enemyObjs.clear(); itemObjs.clear(); projObjs.clear(); fxObjs.clear();
   }
-  function startGame() {
+  function buildLevel() {
     clearEntities();
     Game.buildWorld(G.level);   // meshes must be rebuilt whenever the level changes
     buildWorldMeshes();
     syncExit();
+  }
+  function startGame() {
+    buildLevel();
     lastKills = 0; popUntil = 0;
     G.state = 'play';
     $('ov').classList.add('hidden');
@@ -1383,6 +1587,16 @@ const Main = (() => {
   function bindInput() {
     const KEYMAP = { w: 'fwd', arrowup: 'fwd', s: 'back', arrowdown: 'back', a: 'left', d: 'right' };
     let lastTouch = 0;   // a tap also raises mousedown; this keeps it from firing twice
+    window.addEventListener('gamepadconnected', e => {
+      padIndex = e.gamepad && e.gamepad.index != null ? e.gamepad.index : 0;
+      clearPad();
+    });
+    window.addEventListener('gamepaddisconnected', () => {
+      padIndex = null;
+      clearPad();
+      // a direction the pad was holding must not stay stuck after it unplugs
+      blendInput();
+    });
     // sound controls (V mutes, - / + adjust volume); preference survives reloads
     const sndBtn = $('sndBtn');
     const refreshSound = () => {
@@ -1390,7 +1604,9 @@ const Main = (() => {
       sndBtn.classList.toggle('off', Sound.muted);
     };
     try {
-      const v = Number(localStorage.getItem('gh.vol'));
+      // Number(null) is 0: an unset preference must not silence the hall
+      const raw = localStorage.getItem('gh.vol');
+      const v = raw === null ? NaN : Number(raw);
       if (Number.isFinite(v)) Sound.setVolume(v);
       Sound.mute(localStorage.getItem('gh.mute') === '1');
     } catch (e) {}
@@ -1404,6 +1620,13 @@ const Main = (() => {
 
     window.addEventListener('keydown', e => {
       const k = e.key.toLowerCase();
+      // A panel is a dialog, so Enter (and Space, where it is not a trigger) is
+      // its confirm key. Return early: a title-screen Space must not also queue
+      // a shot on the way into the game.
+      if (G.state !== 'play' && (k === 'enter' || k === ' ') &&
+          !(e.target && e.target.closest && e.target.closest('button'))) {
+        advance(); e.preventDefault(); return;
+      }
       keys[k] = 1;
       if (KEYMAP[k]) { Input[KEYMAP[k]] = 1; e.preventDefault(); }
       if (k === ' ') { Input.fire = 1; Input.fireEdge = 1; e.preventDefault(); }
@@ -1432,26 +1655,16 @@ const Main = (() => {
       if (k === 'shift') Input.sprint = 0;
       if (k === 'arrowleft' || k === 'arrowright') arrowTurn();
     });
-    const cv = () => renderer.domElement;
     // one click path shared by the mouse and a tap on the title/pause panels
     function canvasClick() {
-      if (G.state === 'pause') {
-        G.state = 'play'; $('ov').classList.add('hidden');
-        if (cv().requestPointerLock) cv().requestPointerLock();
-        return;
-      }
-      if (G.state !== 'play') {
-        if (G.state === 'win') G.level = (G.level + 1) % LEVELS.length;   // cleared a hall -> next one
-        startGame();
-        return;
-      }
+      if (G.state !== 'play') { advance(); return; }
       Input.fire = 1; Input.fireEdge = 1;
       if (document.pointerLockElement !== cv() && cv().requestPointerLock) cv().requestPointerLock();
     }
     document.addEventListener('mousedown', e => {
       if (e.button !== 0) return;
-      // the option buttons in the panel are not a "resume" tap
-      if (e.target && e.target.closest && e.target.closest('.opts')) return;
+      // the option buttons and the floor pickers in the panel are not a "resume" tap
+      if (e.target && e.target.closest && e.target.closest('.opts,.lvls')) return;
       // only canvas taps are duplicated by the touch stick; the overlay's
       // resume/start tap must never be swallowed by that guard
       if (e.target === cv() && performance.now() - lastTouch < 400) return;
@@ -1463,6 +1676,18 @@ const Main = (() => {
       if (!b) return;
       e.preventDefault(); e.stopPropagation();
       toggleOpt(b.dataset.opt);
+    });
+    // The floor picker listens for click rather than pointerdown so a keyboard
+    // Enter on a focused button takes the same path as a thumb tap.
+    $('ovBox').addEventListener('click', e => {
+      const b = e.target.closest && e.target.closest('button[data-level]');
+      if (!b || b.disabled) return;
+      e.preventDefault(); e.stopPropagation();
+      G.level = Math.max(0, Math.min(LEVELS.length - 1, Number(b.dataset.level) | 0));
+      // the panel quotes the floor's enemy count and the hall behind it is on
+      // screen, so choosing a floor has to build it, not just remember it
+      buildLevel();
+      showOverlay('title');
     });
     // a phone session is interrupted constantly (a call, a notification, the
     // browser tab switching). Come back to a paused hall, never a dead run.
@@ -1499,6 +1724,9 @@ const Main = (() => {
       return;
     }
     document.body.classList.add('touch');
+    // older iOS versions pinch through gesture events even with touch-action set
+    document.addEventListener('gesturestart', e => e.preventDefault());
+    document.addEventListener('gesturechange', e => e.preventDefault());
     Input.autoFire = prefs.autofire !== false;
     Input.aim = prefs.aim === true;
 
@@ -1575,6 +1803,9 @@ const Main = (() => {
     layoutTouch();
     window.addEventListener('resize', layoutTouch);
     TouchUI.apply = layoutTouch;
+    // the pad needs to know whether a thumb is on a stick before it can share
+    // the move/turn channels instead of overwriting them
+    TouchUI.held = () => moveActive || lookActive || padDown;
 
     const move = { id: -1, ox: 0, oy: 0, dragged: false, t0: 0, combo: false, a0: 0, dir: 0 };
     const look = { id: -1, ox: 0, oy: 0, dragged: false, t0: 0 };
@@ -1587,12 +1818,14 @@ const Main = (() => {
 
     // A tap is one trigger pull, not a held trigger. If the action is still
     // cooling when the tap lands, hold the beat so the shot is not swallowed -
-    // a thumb tap is far quicker than a 0.9 s shotgun cycle. The queue has to
-    // outlive that cooldown, otherwise the tap is just a dead press.
-    let tapUntil = 0, tapShots = 0, padDown = false;
+    // a thumb tap is far quicker than a 0.9 s shotgun cycle. The queue is timed
+    // by the sim clock, like the death/win panels: on a loaded phone the wall
+    // clock outruns the sim, and a wall-clock queue expires before the cooldown
+    // it was meant to outlive - the tap reads as a dead press.
+    let tapLeft = 0, tapShots = 0, padDown = false;
     const tapFire = () => {
       tapShots = G.stats.shots;
-      tapUntil = performance.now() + Math.max(400, ((G.player.fireCd || 0) + 0.4) * 1000);
+      tapLeft = Math.max(0.4, (G.player.fireCd || 0) + 0.4);
       Input.fire = 1; Input.fireEdge = 1;
     };
     function endMove() {
@@ -1623,12 +1856,15 @@ const Main = (() => {
     TouchUI.release = () => { endMove(); endLook(); endFire(); };
     // One-thumb steering has to be re-evaluated every frame: the finger stays
     // put while the heading changes, so the turn has to close the remaining angle.
-    TouchUI.update = () => {
-      if (tapUntil) {
-        if (G.stats.shots > tapShots) tapUntil = 0;          // the shot went off
-        else if (performance.now() > tapUntil) tapUntil = 0; // the moment passed
-        else { Input.fire = 1; Input.fireEdge = 1; }
-        if (!tapUntil && !padDown) Input.fire = 0;
+    TouchUI.update = (dt) => {
+      if (tapLeft > 0) {
+        if (G.stats.shots > tapShots) tapLeft = 0;           // the shot went off
+        else {
+          tapLeft -= dt || 0;
+          if (tapLeft > 0) { Input.fire = 1; Input.fireEdge = 1; }
+          else tapLeft = 0;                                  // the moment passed
+        }
+        if (!tapLeft && !padDown) Input.fire = 0;
       }
       if (!prefs.one || move.id < 0) return;
       const rel = wrap(move.dir - G.player.a);
@@ -1772,13 +2008,6 @@ const Main = (() => {
     }
 
     // ---- the buttons a thumb can actually reach ----
-    function swapGun() {
-      const p = G.player;
-      for (let i = 1; i <= 3; i++) {
-        const w = (p.w + i) % 3;
-        if (w === 0 || (w === 1 && p.owns.sg) || (w === 2 && p.owns.mg)) { Input.wantW = w; break; }
-      }
-    }
     const hudBtn = (id, fn) => $(id).addEventListener('pointerdown', e => {
       e.preventDefault(); e.stopPropagation(); fn();
     });

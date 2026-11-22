@@ -410,6 +410,34 @@ test('the flow field never routes enemies through a pushwall', () => {
   assert.ok(flow[normal.cy * Game.width() + normal.cx] !== null, 'regular doors should be routable');
 });
 
+test('a hunting enemy paths around corners via the flow field', () => {
+  fresh(0, 1234);
+  // the flow lookup used to be transposed - idx(y, x) - which only lands on the
+  // right cell by luck on a square map; the carved levels are not square
+  assert.notStrictEqual(Game.width(), Game.height(), 'the regression needs a non-square map');
+  const p = G.player;
+  // a sealed vault guard can never reach the player, so pick a loose hunter
+  const e = G.enemies.find(en => en.vault < 0 && !Game.hasLOS(en.x, en.y, p.x, p.y));
+  assert.ok(e, 'level 0 has a loose enemy out of the player\'s sight');
+  e.mode = 'chase'; e.lx = p.x; e.ly = p.y;
+  p.hp = 1e6;                                  // the hunt must finish; the player must not die mid-path
+  const d0 = Math.hypot(e.x - p.x, e.y - p.y);
+  sim(900);                                    // 15 s: the route detours around masonry before it closes
+  const d1 = Math.hypot(e.x - p.x, e.y - p.y);
+  assert.ok(d1 < 1.5, `the hunt must reach the player (${d0.toFixed(2)} -> ${d1.toFixed(2)})`);
+});
+
+test('the win rotation never steps onto the secret floor', () => {
+  fresh(0, 3);
+  assert.ok(GH.levels.some(l => l.secret), 'there is a secret floor to skip');
+  for (let i = 0; i < GH.levels.length; i++) {
+    G.level = i;
+    const n = Game.nextIndex();
+    assert.ok(!GH.levels[n].secret, `floor ${i} rotates into the secret floor`);
+    assert.strictEqual(n, Game.nextLevel(), 'nextLevel builds what nextIndex names');
+  }
+});
+
 test('a level can override any tuning value', () => {
   fresh(1, 1);
   assert.strictEqual(Game.tune().torchCount, GH.levels[1].tune.torchCount, 'level tuning wins over the base');

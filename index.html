@@ -2,12 +2,23 @@
 <html>
 <head>
 <meta charset="utf-8">
-<link rel="icon" href="data:,">
 <title>GRIM HALL</title>
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="A Wolfenstein-style retro FPS: eighteen procedurally built halls, no external assets, playable offline.">
+<meta name="theme-color" content="#0a0505">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="GRIM HALL">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <style>
   html,body{margin:0;padding:0;height:100%;background:#000;overflow:hidden;
-    font-family:'Courier New',monospace;user-select:none;}
+    font-family:'Courier New',monospace;user-select:none;overscroll-behavior:none;}
+  /* two thumbs on the screen is a pinch to the browser unless every surface
+     says otherwise: the letterbox bars and the HUD are part of the control
+     area, so the whole touch page opts out of pan/zoom gestures */
+  body.touch{touch-action:none;}
   #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#000;}
   /* vh is the wrong box on mobile: the browser toolbar collapses and 100vh keeps
      lying about it. dvh tracks the live viewport, and @supports keeps old
@@ -34,7 +45,7 @@
   button:hover{background:#2e2e2e;color:#fff;}
   button.off{color:#777;}
   /* ---- touch mode: every control a thumb can actually hit ---- */
-  body.touch #hud{bottom:env(safe-area-inset-bottom);touch-action:manipulation;}
+  body.touch #hud{bottom:env(safe-area-inset-bottom);touch-action:none;}
   body.touch .cell{min-width:44px;}
   body.touch button{min-width:44px;min-height:44px;font-size:12px;}
   body.touch .touchonly{display:flex;}
@@ -55,6 +66,22 @@
   body.touch.mirror #mini{right:auto;left:calc(env(safe-area-inset-left) + 8px);}
   #sysbar button{min-width:44px;min-height:44px;font-size:11px;letter-spacing:1px;
     background:rgba(0,0,0,.6);}
+  /* an Overlord is a set piece, and a set piece needs a health bar the player can
+     read without looking away from the fight. It is a pure renderer read of the
+     sim (G.enemies/e.hp), never a sim object. */
+  #boss{position:fixed;left:50%;top:54px;transform:translateX(-50%);
+    width:min(40vw,420px);z-index:4;pointer-events:none;
+    background:rgba(12,7,7,.8);border:2px solid #7a2a2a;padding:6px 10px;
+    color:#ddd;font-size:11px;letter-spacing:2px;}
+  #boss.hidden{display:none;}
+  #boss .bar{height:10px;background:#241010;border:1px solid #5a2020;margin-top:5px;}
+  #boss .bar div{height:100%;width:100%;background:#e03020;}
+  #boss.wounded .bar div{background:#ff7a30;}
+  /* under ~580px the corner widgets eat the width, so the bar drops below the
+     minimap instead of crossing it */
+  @media (max-width:580px){
+    #boss{top:186px;width:min(38vw,240px);}
+  }
   .touchonly{display:none;}
   .val{font-size:22px;color:#ffd75e;font-weight:bold;text-shadow:0 0 6px #a60;}
   #faceCell{flex:1.4;background:#101010;}
@@ -104,6 +131,13 @@
   .opts{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;}
   .opts button{min-width:44px;min-height:44px;font-size:11px;letter-spacing:1px;}
   .opts button.off{color:#777;border-color:#333;}
+  /* the title screen doubles as the level select: unlocked floors are buttons,
+     locked ones read as a ladder the player has not climbed yet */
+  .lvls{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px;}
+  .lvls button{min-width:44px;min-height:44px;font-size:12px;letter-spacing:1px;}
+  .lvls button.sel{background:#3a2a10;border-color:#ffd75e;color:#ffd75e;}
+  .lvls button:disabled{color:#555;border-color:#2a2a2a;background:#171717;cursor:default;}
+  .best{font-size:12px;color:#8a8a8a;margin-top:8px;letter-spacing:1px;}
   #vig{position:fixed;inset:0;pointer-events:none;z-index:3;opacity:0;
     background:radial-gradient(ellipse at center,transparent 55%,rgba(180,0,0,.55) 100%);}
   #hit{position:fixed;left:50%;top:46%;transform:translate(-50%,-50%);color:#ff5040;
@@ -131,6 +165,7 @@
   <button id="mapBtn" title="toggle map (M)">&#9635; MAP OFF</button>
   <button id="pauseBtn" title="pause (ESC)">&#9633; PAUSE</button>
 </div>
+<div id="boss" class="hidden"><span>OVERLORD</span><div class="bar"><div id="bossFill"></div></div></div>
 <div id="touchUI" class="hidden">
   <div id="tip">LEFT THUMB drag to move &middot; RIGHT THUMB drag to turn &middot; FIRE hold to shoot</div>
   <!-- the sticks are drag surfaces, not buttons: a screen reader cannot drag them,
@@ -140,15 +175,27 @@
   <div id="firePad" role="button" aria-label="Fire: hold to shoot, slide to turn">FIRE<small>hold / slide</small></div>
 </div>
 <div id="hit">+</div>
-<div id="ov"><div class="panel" id="ovBox"></div></div>
+<!-- the panels are real dialogs: a keyboard user needs to know one is open and
+     that the keys they press are answering it, not driving the hall -->
+<div id="ov" role="dialog" aria-modal="true"><div class="panel" id="ovBox"></div></div>
 <!-- data.js declares the GH namespace that art/audio/game/main all attach to,
      so it must come first. -->
 <script src="lib/three.min.js"></script>
 <script src="js/data.js"></script>
+<script src="js/progress.js"></script>
 <script src="js/secrets.js"></script>
 <script src="js/art.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/game.js"></script>
 <script src="js/main.js"></script>
+<script>
+  // A service worker needs a real origin: on file:// registration throws, so the
+  // double-click-the-html workflow stays exactly as it was.
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    navigator.serviceWorker.register('sw.js').catch(function (err) {
+      console.warn('offline cache not installed:', err && err.message);
+    });
+  }
+</script>
 </body>
 </html>

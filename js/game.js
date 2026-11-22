@@ -525,7 +525,7 @@
     if (sees) { e.mode = 'chase'; e.lx = p.x; e.ly = p.y; }
     if (e.mode === 'chase' && !sees && d > 0.5) {
       // follow the flow field so enemies round corners instead of hugging walls
-      const f = FLOW ? FLOW[idx(Math.floor(e.y), Math.floor(e.x))] : null;
+      const f = FLOW ? FLOW[idx(Math.floor(e.x), Math.floor(e.y))] : null;
       let mx = e.lx - e.x, my = e.ly - e.y;
       if (f) { mx = f.tx + 0.5 - e.x; my = f.ty + 0.5 - e.y; }
       const ld = Math.hypot(mx, my);
@@ -723,10 +723,14 @@
     levelCount: () => NS.levels.length,
     // Wolfenstein's secret floor is not part of the rotation: it is reached only
     // on the elevator, and riding out of it returns you to the next normal floor.
-    nextLevel: () => {
+    // Pure index math, so the win panel can name the next floor without building it.
+    nextIndex: () => {
       let n = (G.level + 1) % NS.levels.length;
       while (NS.levels[n] && NS.levels[n].secret) n = (n + 1) % NS.levels.length;
-      buildWorld(n);
+      return n;
+    },
+    nextLevel: () => {
+      buildWorld(Game.nextIndex());
       return G.level;
     },
     hud: () => ({

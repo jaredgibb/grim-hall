@@ -1,0 +1,9 @@
+# Cloudflare Pages: ship the game, not the workshop.
+# (wrangler pages deploy honours this file, gitignore-style)
+tmp-*
+test/
+docs/
+tools/
+package.json
+.bible.txt
+.clinerules/

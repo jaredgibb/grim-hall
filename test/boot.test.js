@@ -14,18 +14,20 @@ test('index.html loads data.js before everything that attaches to it', () => {
   const order = [...html.matchAll(/<script src="([^"]+)"/g)].map(m => m[1]);
   const data = order.indexOf('js/data.js');
   assert.ok(data >= 0, 'index.html never loads js/data.js');
-  for (const mod of ['js/art.js', 'js/audio.js', 'js/game.js', 'js/main.js']) {
+  for (const mod of ['js/art.js', 'js/audio.js', 'js/progress.js', 'js/game.js', 'js/main.js']) {
     assert.ok(order.indexOf(mod) > data, `${mod} must load after js/data.js`);
   }
 });
 
-test('art, audio and game all attach themselves to the GH namespace', () => {
+test('art, audio, progress and game all attach themselves to the GH namespace', () => {
   const GH = require('../js/data.js');
   require('../js/art.js');
   require('../js/audio.js');
+  require('../js/progress.js');
   require('../js/game.js');
   assert.ok(GH.art && typeof GH.art.build === 'function', 'GH.art missing');
   assert.ok(GH.sound && GH.music, 'GH.sound / GH.music missing');
+  assert.ok(GH.progress && typeof GH.progress.recordWin === 'function', 'GH.progress missing');
   assert.ok(GH.game && typeof GH.game.update === 'function', 'GH.game missing');
   assert.ok(typeof GH.game.grid === 'function', 'GH.game.grid missing (renderer needs it)');
 });
@@ -46,6 +48,7 @@ test('main.js boots with only THREE + GH in scope', () => {
   const GH = require('../js/data.js');
   require('../js/art.js');
   require('../js/audio.js');
+  require('../js/progress.js');
   require('../js/game.js');
   const src = fs.readFileSync(path.join(ROOT, 'js/main.js'), 'utf8');
   const sandbox = {

@@ -56,8 +56,6 @@
     boom(d) { const v = Math.max(0.2, 1 - (d || 0) / 14); noiseBurst(0.5, 0.8 * v, 500); tone(70, 0.4, 'sine', 0.5 * v, 30); },
     door() { tone(90, 0.3, 'sawtooth', 0.12, 140); noiseBurst(0.2, 0.1, 300); },
     // a pushwall grinding sideways through masonry: low, long, dusty
-    rumble() { noiseBurst(0.5, 0.4, 260); tone(60, 0.5, 'sawtooth', 0.16, 40); },
-    // a pushwall grinding sideways through masonry: low, long, dusty
     pushwall() { noiseBurst(0.6, 0.28, 300); tone(70, 0.6, 'sawtooth', 0.14, 45);
                  tone(210, 0.18, 'square', 0.06, 120, 0.2); },
     // the panel hits rock and stops: a short, hard clank

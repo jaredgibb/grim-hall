@@ -144,19 +144,26 @@ window.addEventListener('load', () => {
       ok('fire pad releases', !I.fire, 'fire=' + I.fire);
 
       // ---- a tap in the look half is a trigger pull, and only one ----
+      // the tap queue runs on the sim clock, and a loaded headless tab runs the
+      // sim slower than the wall clock: poll for the shot instead of sleeping a
+      // fixed beat, then settle to prove it was exactly one
+      const shotFired = async (n) => {
+        for (let i = 0; i < 60 && G.stats.shots < n; i++) await wait(100);
+        await wait(300);
+      };
       const shots1 = G.stats.shots;
       pt(cv, 'pointerdown', 6, 900, 250);
       await wait(60);
       pt(cv, 'pointerup', 6, 900, 250);
-      await wait(1200);
+      await shotFired(shots1 + 1);
       ok('look-half tap fires exactly once', G.stats.shots === shots1 + 1,
-        'delta=' + (G.stats.shots - shots1) + ' fireCd=' + G.player.fireCd.toFixed(2));
+        'delta=' + (G.stats.shots - shots1) + ' state=' + G.state);
       // the tap lands while the shotgun is still cooling: the shot is queued,
       // not thrown away, and it is still only one shot
       const shots2 = G.stats.shots;
       pt(cv, 'pointerdown', 17, 900, 250);
       pt(cv, 'pointerup', 17, 900, 250);
-      await wait(1400);
+      await shotFired(shots2 + 1);
       ok('a tap during the cooldown still fires once', G.stats.shots === shots2 + 1,
         'delta=' + (G.stats.shots - shots2));
 
@@ -211,6 +218,37 @@ window.addEventListener('load', () => {
       ok('HAPTICS off is persisted', readPrefs().haptics === false, 'haptics=' + readPrefs().haptics);
       toggle('haptics');
       ok('option buttons do not also resume the game', G.state === 'play', 'state=' + G.state);
+
+      // ---- the Overlord boss bar ----
+      const bossEl = document.getElementById('boss'), bossFill = document.getElementById('bossFill');
+      const bossAlive = () => G.enemies.find(e => e.t === 'O' && !e.dead);
+      const barHits = r => [...sysbar.querySelectorAll('button')].some(b => overlap(r, rect(b)) > 0) ||
+                           overlap(r, rect(document.getElementById('mini'))) > 0;
+      const ov = bossAlive();
+      if (ov) {
+        ov.hp = ov.def.hp;
+        await wait(250);
+        ok('boss bar shows while an Overlord lives', !bossEl.classList.contains('hidden'));
+        ok('a fresh Overlord reads as a full bar', bossFill.style.width === '100%', 'width=' + bossFill.style.width);
+        ov.hp = Math.round(ov.def.hp * 0.4);   // below the wound threshold, so the tint has to show
+        await wait(250);
+        ok('the bar drains with the Overlord', parseFloat(bossFill.style.width) === Math.round(100 * ov.hp / ov.def.hp),
+          'width=' + bossFill.style.width + ' hp=' + ov.hp + '/' + ov.def.hp);
+        ok('a wounded Overlord tints the bar', bossEl.classList.contains('wounded'));
+        ok('the boss bar clears the corner switches and the minimap', !barHits(rect(bossEl)),
+          'boss ' + rect(bossEl).join('x'));
+        toggle('mirror');
+        await wait(250);
+        ok('the boss bar clears the chrome when mirrored', !barHits(rect(bossEl)),
+          'boss ' + rect(bossEl).join('x'));
+        toggle('mirror');
+        GH.game.killEnemy(ov);
+        await wait(400);
+        ok('the bar is gone once the Overlord is dead', bossEl.classList.contains('hidden'),
+          'state=' + G.state + ' hp=' + ov.hp);
+      } else {
+        ok('there was a live Overlord to test the boss bar against', false, 'no O enemy alive');
+      }
 
       // ---- aim assist ----
       // Stage a deterministic target: the procedural level puts the spawn and the
@@ -354,7 +392,7 @@ window.addEventListener('load', () => {
       const fire2 = G.stats.shots;
       drag(13, 700, 250, 700, 250);                   // tap with no drag = fire
       pt(cv, 'pointerup', 13, 700, 250);
-      await wait(600);
+      await shotFired(fire2 + 1);
       ok('one-thumb tap-to-fire works', G.stats.shots > fire2, 'shots=' + (G.stats.shots - fire2));
       toggle('mode');
       ok('one-thumb mode disabled', readPrefs().one !== true, 'one=' + readPrefs().one);
@@ -394,6 +432,155 @@ window.addEventListener('load', () => {
       await wait(200);
       ok('hidden tab auto-pauses', G.state === 'pause', 'state=' + G.state);
       Object.defineProperty(document, 'hidden', { value: false, writable: false, configurable: true });
+
+      // ---- keyboard-accessible panels ----
+      const press = k => window.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+      const ovEl = document.getElementById('ov'), boxEl = document.getElementById('ovBox');
+      ok('the panel is announced as a dialog', ovEl.getAttribute('role') === 'dialog' && ovEl.getAttribute('aria-modal') === 'true');
+      ok('the panel names itself for a screen reader', (boxEl.getAttribute('aria-label') || '').length > 0,
+        'aria-label=' + boxEl.getAttribute('aria-label'));
+      ok('the prompt tells the player Enter works', boxEl.textContent.includes('ENTER'));
+      // the hidden tab paused the run, so Enter is the keyboard way back in
+      press('Enter');
+      ok('Enter resumes from pause', G.state === 'play', 'state=' + G.state);
+      press('Enter');
+      ok('Enter while playing does not restart the run', G.state === 'play', 'state=' + G.state);
+      // a focused option button owns its own Enter, so the panel does not resume
+      // out from under a keyboard user tabbing through the switches
+      G.state = 'pause'; Main.showOverlay('pause');
+      const opt = document.querySelector('#ovBox button[data-opt=autofire]');
+      if (opt) opt.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      ok('Enter on a focused option button does not resume', G.state === 'pause', 'state=' + G.state);
+      press('Enter');
+      ok('Enter from the panel body resumes', G.state === 'play', 'state=' + G.state);
+      G.state = 'title'; Main.showOverlay('title');
+      press(' ');
+      ok('Space on the title panel starts the game without also firing',
+        G.state === 'play' && !I.fire, 'state=' + G.state + ' fire=' + I.fire);
+      G.state = 'title'; Main.showOverlay('title');
+      press('Enter');
+      ok('Enter starts from the title panel', G.state === 'play', 'state=' + G.state);
+
+      // ---- progress and the level select ----
+      const progOf = () => GH.progress.load(localStorage, GH.levels);
+      const levelBtns = () => [...document.querySelectorAll('#ovBox button[data-level]')];
+      G.state = 'title'; Main.showOverlay('title');
+      ok('the title screen offers every normal floor',
+        levelBtns().length === GH.levels.filter(l => !l.secret).length,
+        'row has ' + levelBtns().length + ' of ' + GH.levels.length + ' floors');
+      ok('the secret floor is not on the menu', !document.querySelector('#ovBox button[data-level="17"]'));
+      ok('locked floors are rendered but disabled', levelBtns().some(b => b.disabled) && !levelBtns()[0].disabled);
+      // the win panel is where a run is banked
+      G.state = 'win'; Main.showOverlay('win');
+      const saved = progOf();
+      ok('clearing a floor writes the score to storage', saved.best[G.level], 'best=' + JSON.stringify(saved.best));
+      ok('clearing a floor unlocks the next one', saved.unlocked >= 1, 'unlocked=' + saved.unlocked);
+      G.state = 'title'; Main.showOverlay('title');
+      const nextBtn = document.querySelector('#ovBox button[data-level="' + saved.unlocked + '"]');
+      ok('the newly unlocked floor is selectable', !!nextBtn && !nextBtn.disabled);
+      if (nextBtn) {
+        nextBtn.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 30, pointerType: 'touch', bubbles: true, cancelable: true }));
+        nextBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        ok('tapping a floor picks it', G.level === saved.unlocked, 'level=' + G.level);
+        ok('the chosen floor is marked as selected',
+          document.querySelector('#ovBox button[data-level="' + G.level + '"]').classList.contains('sel'));
+        ok('the title quotes the floor just unlocked', document.querySelector('#ovBox .best').textContent.includes(GH.levels[G.level].name),
+          document.querySelector('#ovBox .best').textContent);
+      }
+      const lockedBtn = document.querySelector('#ovBox button[data-level="' + (GH.levels.length - 2) + '"]');
+      if (lockedBtn && lockedBtn.disabled) {
+        lockedBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        ok('a locked floor cannot be picked', G.level === saved.unlocked, 'level=' + G.level);
+      }
+      press('Enter');
+      ok('the run starts on the chosen floor', G.state === 'play' && G.level === saved.unlocked,
+        'state=' + G.state + ' level=' + G.level);
+      ok('the level row does not swallow the resume tap', G.state === 'play', 'state=' + G.state);
+
+      // ---- gamepad ----
+      // No controller in headless Chrome, so stub the API with a pad the test
+      // can push around. Everything below is the real polling code in main.js.
+      const fakePad = { index: 0, axes: [0, 0, 0, 0], buttons: Array.from({ length: 16 }, () => ({ pressed: false, value: 0 })) };
+      const realPads = navigator.getGamepads;
+      Object.defineProperty(navigator, 'getGamepads', { value: () => [fakePad], configurable: true });
+      const stick = (x, y, rx, ry) => { fakePad.axes = [x, y, rx, ry]; };
+      const padBtn = (i, on) => { fakePad.buttons[i].pressed = !!on; fakePad.buttons[i].value = on ? 1 : 0; };
+      const release = i => { padBtn(i, false); return wait(120); };
+      const connect = new Event('gamepadconnected'); connect.gamepad = fakePad;
+      window.dispatchEvent(connect);
+      if (I.aim) toggle('aim');   // assist would blend its own turn onto the camera
+      stick(0, -0.5, 0, 0);
+      await wait(200);
+      ok('the left stick walks analog', I.fwd === 0.5 && !I.sprint && G.player.moving,
+        'fwd=' + I.fwd + ' sprint=' + I.sprint + ' moving=' + G.player.moving);
+      stick(0, -1, 0, 0);
+      await wait(200);
+      ok('a full left-stick push sprints', I.fwd === 1 && I.sprint === 1, 'fwd=' + I.fwd + ' sprint=' + I.sprint);
+      stick(0.1, 0, 0, 0);
+      await wait(200);
+      ok('the stick dead zone does not walk', I.fwd === 0 && I.right === 0 && !G.player.moving,
+        'fwd=' + I.fwd + ' right=' + I.right);
+      stick(1, 0, 0, 0);
+      await wait(200);
+      ok('the left stick strafes', I.right === 1 && I.fwd === 0, 'right=' + I.right + ' fwd=' + I.fwd);
+      stick(0, 0, 0.8, 0);
+      await wait(200);
+      ok('the right stick turns through the turn channel', I.turn === 1, 'turn=' + I.turn);
+      stick(0, 0, 0.4, 0);
+      await wait(200);
+      ok('a half right stick turns half', I.turn === 0.5, 'turn=' + I.turn);
+      stick(0, 0, 0, 0);
+      await wait(200);
+      const stillA = G.player.a;
+      await wait(300);
+      ok('a released stick stops the spin', I.turn === 0 && Math.abs(G.player.a - stillA) < 0.01,
+        'turn=' + I.turn + ' drift=' + (G.player.a - stillA));
+      await release(7);
+      padBtn(7, true);
+      // headless Chrome renders at ~10fps and the sim clamps dt to 0.05s, so a
+      // second of wall time is only about half a second of hall time
+      const shotsBefore = G.stats.shots;
+      await wait(2000);
+      padBtn(7, false);
+      ok('RT fires at the pistol cadence', G.stats.shots - shotsBefore >= 2 && G.stats.shots - shotsBefore <= 8,
+        'shots=' + (G.stats.shots - shotsBefore));
+      await wait(200);
+      ok('releasing RT stops the firing', !I.fire, 'fire=' + I.fire);
+      G.player.owns.sg = true;   // the shoulder buttons need a second gun to find
+      const gunBefore = G.player.w;
+      await release(4);
+      padBtn(4, true);
+      await wait(200);
+      ok('shoulder buttons swap the gun', G.player.w !== gunBefore, 'w=' + G.player.w + ' was ' + gunBefore);
+      const gun2 = G.player.w;
+      await release(4);
+      padBtn(5, true);
+      await wait(200);
+      ok('the other shoulder button cycles again', G.player.w !== gun2, 'w=' + G.player.w + ' was ' + gun2);
+      await release(9);
+      padBtn(9, true);
+      await wait(200);
+      ok('Start pauses the run', G.state === 'pause', 'state=' + G.state);
+      await release(9);
+      padBtn(9, true);
+      await wait(200);
+      ok('Start again resumes it', G.state === 'play', 'state=' + G.state);
+      G.state = 'title'; Main.showOverlay('title');
+      await release(0);
+      padBtn(0, true);
+      await wait(250);
+      ok('A starts the game from the title panel', G.state === 'play', 'state=' + G.state);
+      window.dispatchEvent(new Event('gamepaddisconnected'));
+      press('w');
+      stick(0, -1, 0, 0);
+      await wait(250);
+      ok('the keyboard still walks after the pad unplugs', I.fwd === 1 && G.player.moving,
+        'fwd=' + I.fwd + ' moving=' + G.player.moving);
+      window.dispatchEvent(new KeyboardEvent('keyup', { key: 'w', bubbles: true, cancelable: true }));
+      await wait(200);
+      ok('an unplugged pad leaves no stuck direction', I.fwd === 0 && !G.player.moving, 'fwd=' + I.fwd);
+      stick(0, 0, 0, 0);
+      Object.defineProperty(navigator, 'getGamepads', { value: realPads, configurable: true });
 
       const fails = out.filter(s => s.startsWith('FAIL')).length;
       d.textContent = 'TOTAL ' + (out.length - fails) + '/' + out.length + ' | ' + out.join(' | ');

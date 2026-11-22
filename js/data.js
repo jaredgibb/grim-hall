@@ -42,7 +42,6 @@ const GH = {
     projSpeed: 7, projLife: 4,
     dropHealth: 0.35, dropAmmo: 0.18,
     scorePerKill: 100,
-    acousticZones: true,      // guards hear gunfire only inside their own acoustic zone (id floor codes)
     doorTriggerDist: 1.7,      // player / chasing enemy this close opens a door
     doorOpenSpeed: 4,          // easing rate toward the target openness
     doorPassFrac: 0.5,         // a door counts as solid below this open fraction
