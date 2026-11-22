@@ -4,17 +4,26 @@
 <meta charset="utf-8">
 <link rel="icon" href="data:,">
 <title>GRIM HALL</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <style>
   html,body{margin:0;padding:0;height:100%;background:#000;overflow:hidden;
     font-family:'Courier New',monospace;user-select:none;}
   #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#000;}
+  /* vh is the wrong box on mobile: the browser toolbar collapses and 100vh keeps
+     lying about it. dvh tracks the live viewport, and @supports keeps old
+     browsers on the vh fallback. */
   #wrap canvas{image-rendering:pixelated;image-rendering:crisp-edges;
     width:min(100vw,calc(100vh*1.6));height:min(100vw/1.6,100vh);touch-action:none;}
+  @supports (height:100dvh){
+    #wrap canvas{width:min(100vw,calc(100dvh*1.6));height:min(100vw/1.6,100dvh);}
+  }
   /* ---- HUD status bar (wolf3d style) ---- */
   #hud{position:fixed;left:50%;transform:translateX(-50%);bottom:0;width:min(100vw,calc(100vh*1.6));
     height:calc(min(100vw,calc(100vh*1.6))/8);background:#1a1a1a;border-top:3px solid #444;
     display:flex;align-items:stretch;box-sizing:border-box;z-index:5;}
+  @supports (height:100dvh){
+    #hud{width:min(100vw,calc(100dvh*1.6));height:calc(min(100vw,calc(100dvh*1.6))/8);}
+  }
   #hud.hidden{display:none;}
   .cell{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
     border-right:2px solid #333;color:#ddd;}
@@ -24,6 +33,24 @@
     padding:4px 10px;cursor:pointer;}
   button:hover{background:#2e2e2e;color:#fff;}
   button.off{color:#777;}
+  /* ---- touch mode: every control a thumb can actually hit ---- */
+  body.touch #hud{bottom:env(safe-area-inset-bottom);touch-action:manipulation;}
+  body.touch .cell{min-width:44px;}
+  body.touch button{min-width:44px;min-height:44px;font-size:12px;}
+  body.touch .touchonly{display:flex;}
+  body.touch .hudhide{display:none;}
+  body.touch #gunCell{flex:1.6;}
+  body.touch .val{font-size:18px;}
+  body.touch #hGun{font-size:12px;}
+  /* rarely-used switches go in the top-left corner. The bottom of the screen is
+     thumb traffic: a PAUSE button next to the FIRE pad gets pressed in the panic,
+     and the top corners sit outside the thumb's natural arc. */
+  #sysbar{position:fixed;left:calc(env(safe-area-inset-left) + 8px);
+    top:calc(env(safe-area-inset-top) + 8px);display:none;gap:8px;z-index:5;}
+  body.touch #sysbar{display:flex;}
+  #sysbar button{min-width:44px;min-height:44px;font-size:11px;letter-spacing:1px;
+    background:rgba(0,0,0,.6);}
+  .touchonly{display:none;}
   .val{font-size:22px;color:#ffd75e;font-weight:bold;text-shadow:0 0 6px #a60;}
   #faceCell{flex:1.4;background:#101010;}
   #face{height:90%;image-rendering:pixelated;}
@@ -41,6 +68,33 @@
   @keyframes blink{50%{opacity:.25}}
   #mini{position:fixed;top:8px;right:8px;z-index:4;image-rendering:pixelated;
     border:2px solid #333;background:rgba(0,0,0,.55);display:none;}
+  /* ---- the two-thumb control surface: a floating move stick + a fire pad ---- */
+  #touchUI{position:fixed;inset:0;z-index:4;pointer-events:none;}
+  #touchUI.hidden{display:none;}
+  /* first-run legend: controls you cannot see are controls you cannot find */
+  #tip{position:absolute;top:calc(env(safe-area-inset-top) + 10px);left:50%;
+    transform:translateX(-50%);color:#9a9a9a;font-size:11px;letter-spacing:1px;
+    background:rgba(0,0,0,.6);border:1px solid #333;padding:6px 12px;border-radius:6px;
+    pointer-events:none;opacity:0;animation:tipfade 10s forwards 1.5s;max-width:92vw;}
+  @keyframes tipfade{0%{opacity:0}12%{opacity:1}80%{opacity:1}100%{opacity:0}}
+  .tstick{position:absolute;border:2px dashed rgba(255,215,94,.30);border-radius:50%;opacity:0;}
+  .tstick.rest{opacity:.45;}
+  .tstick.on{opacity:1;border-color:#ffd75e;background:rgba(255,215,94,.07);}
+  .tstick .knob{position:absolute;left:50%;top:50%;width:22px;height:22px;border-radius:50%;
+    background:#ffd75e;opacity:.5;}
+  .tstick.on .knob{opacity:.9;box-shadow:0 0 10px rgba(255,215,94,.5);}
+  .tstick.sprint{border-color:#ff5040;}
+  .tstick.sprint .knob{background:#ff5040;box-shadow:0 0 12px rgba(255,60,40,.7);}
+  #firePad{position:absolute;width:66px;height:66px;border:2px solid #7a2a2a;border-radius:10px;
+    background:rgba(122,42,42,.30);color:#ffd75e;font-size:11px;letter-spacing:2px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    pointer-events:auto;touch-action:none;}
+  #firePad small{font-size:8px;color:#8a8a8a;letter-spacing:1px;}
+  #firePad.down{background:rgba(255,60,40,.55);color:#fff;border-color:#ff5040;}
+  /* options panel inside the title/pause panel: every touch assist is opt-in */
+  .opts{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;}
+  .opts button{min-width:44px;min-height:44px;font-size:11px;letter-spacing:1px;}
+  .opts button.off{color:#777;border-color:#333;}
   #vig{position:fixed;inset:0;pointer-events:none;z-index:3;opacity:0;
     background:radial-gradient(ellipse at center,transparent 55%,rgba(180,0,0,.55) 100%);}
   #hit{position:fixed;left:50%;top:46%;transform:translate(-50%,-50%);color:#ff5040;
@@ -56,13 +110,23 @@
 <div id="vig"></div>
 <div id="hud" class="hidden">
   <div class="cell"><div class="lbl">HEALTH</div><div class="val" id="hHp">100</div></div>
-  <div class="cell"><div class="lbl">ARMOR</div><div class="val" id="hArm" style="color:#7fb2ff;text-shadow:0 0 6px #26a">0</div></div>
+  <div class="cell hudhide"><div class="lbl">ARMOR</div><div class="val" id="hArm" style="color:#7fb2ff;text-shadow:0 0 6px #26a">0</div></div>
   <div class="cell" id="faceCell"><canvas id="face" width="48" height="48"></canvas></div>
   <div class="cell"><div class="lbl">AMMO</div><div class="val" id="hAmmo">--</div></div>
   <div class="cell" id="gunCell"><div class="lbl">GUN</div><div class="val" id="hGun" style="font-size:14px">PISTOL</div></div>
   <div class="cell"><div class="lbl">KILLS</div><div class="val" id="hKills">0/10</div></div>
-  <div class="cell"><div class="lbl">TIME</div><div class="val" id="hTime" style="font-size:16px">0:00</div></div>
+  <div class="cell hudhide"><div class="lbl">TIME</div><div class="val" id="hTime" style="font-size:16px">0:00</div></div>
   <div class="cell"><div class="lbl">SOUND</div><button id="sndBtn" title="toggle sound (V)">&#9835; ON</button></div>
+</div>
+<div id="sysbar">
+  <button id="mapBtn" title="toggle map (M)">&#9635; MAP OFF</button>
+  <button id="pauseBtn" title="pause (ESC)">&#9633; PAUSE</button>
+</div>
+<div id="touchUI" class="hidden">
+  <div id="tip">LEFT THUMB drag to move &middot; RIGHT THUMB drag to turn &middot; FIRE hold to shoot</div>
+  <div class="tstick" id="moveStick"><div class="knob"></div></div>
+  <div class="tstick" id="lookStick"><div class="knob"></div></div>
+  <div id="firePad">FIRE<small>hold</small></div>
 </div>
 <div id="hit">+</div>
 <div id="ov"><div class="panel" id="ovBox"></div></div>

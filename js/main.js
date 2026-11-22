@@ -14,11 +14,25 @@ const Main = (() => {
   let guns, gunLight, flashMesh, muzzleLight, muzzlePos, exitMesh, exitLight, flashLight, eFlash;
   let torches = [], flames = [], cones = [], embers = [], coneGeo = null;
   let msgDiv, lastMini = 0, popDiv, popUntil = 0, lastKills = 0, dmgDiv;
-  const Input = { fwd: 0, back: 0, left: 0, right: 0, turn: 0, fire: 0, fireEdge: 0, wantW: -1, sprint: 0 };
+  const Input = { fwd: 0, back: 0, left: 0, right: 0, turn: 0, fire: 0, fireEdge: 0, wantW: -1, sprint: 0, autoFire: 0, aim: 0 };
   NS.input = Input;      // game.js reads GH.input
   window.Input = Input;  // handy for debugging from the console
   const keys = {};
   const WOUND_ON = !location.search.includes('nowound');   // A/B switch for wounded sprites
+  // Touch device? Pointer-events alone are not enough: a laptop with a touchscreen
+  // reports both. Coarse pointer is the honest signal, ?touch=1 forces it for tests.
+  // Guarded because matchMedia/navigator are missing in the headless boot test.
+  const TOUCH = (typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches) ||
+                (typeof navigator === 'object' && navigator.maxTouchPoints > 0) ||
+                (typeof window === 'object' && 'ontouchstart' in window) ||
+                location.search.includes('touch=1');
+  // Touch preferences, read once. Everything here is opt-in: an assist that is
+  // forced on is an assist some players cannot turn off.
+  const prefs = (() => { try { return JSON.parse(localStorage.getItem('gh.touch') || '{}'); } catch (e) { return {}; } })();
+  const savePrefs = () => { try { localStorage.setItem('gh.touch', JSON.stringify(prefs)); } catch (e) {} };
+  const TouchUI = { apply: () => {}, release: () => {} };
+  NS.touch = TouchUI;   // the debug harness and console can reach the touch layer
+  let lastHitDirT = 0;   // used to detect a *new* damage event for the haptic ping
 
   function init() {
     renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
@@ -61,6 +75,10 @@ const Main = (() => {
       requestAnimationFrame(loop);
       const dt = Math.min(0.05, (t - last) / 1000 || 0.016);
       last = t;
+      // A thumb resting on FIRE is not an edge. On a mouse you click again; on a
+      // phone you just keep pushing, so a held trigger re-edges the semi-auto guns.
+      if (Input.fire && Input.autoFire) Input.fireEdge = 1;
+      aimAssist();
       Game.update(dt);
       if (G.state !== lastState) {              // music follows the game state
         if (G.state === 'play') Music.start(); else Music.stop();
@@ -1057,6 +1075,11 @@ const Main = (() => {
     $('hTime').textContent = mm + ':' + String(sec % 60).padStart(2, '0');
     $('hit').style.opacity = G.hitT > 0 ? 1 : 0;
     // damage direction arc
+    // haptics: a buzz when the hall hits you. navigator.vibrate is Chrome/Android
+    // only, so it is a bonus, never a requirement.
+    if (G.hitDirT > lastHitDirT && TOUCH && prefs.haptics !== false &&
+        typeof navigator === 'object' && navigator.vibrate) navigator.vibrate(18);
+    lastHitDirT = G.hitDirT;
     if (G.hitDirT > 0) {
       let rel = G.hitDir - G.player.a;
       while (rel > Math.PI) rel -= TAU; while (rel < -Math.PI) rel += TAU;
@@ -1074,7 +1097,11 @@ const Main = (() => {
     fg.clearRect(0, 0, 48, 48);
     fg.drawImage(ART.face[st].image, 0, 0);
     $('vig').style.opacity = Math.min(1, G.dmgFlash + (p.hp < 30 ? (1 - p.hp / 30) * 0.35 * (0.6 + 0.4 * Math.sin(t * 6)) : 0));
-    $('hud').classList.toggle('hidden', G.state === 'title');
+    // The touch sticks are laid out against the HUD, so showing or hiding the
+    // bar has to re-lay them out - otherwise the sticks end up buried under it.
+    const hudHidden = G.state === 'title';
+    if (TOUCH && $('hud').classList.contains('hidden') !== hudHidden) TouchUI.apply();
+    $('hud').classList.toggle('hidden', hudHidden);
     if (G.mini && t - lastMini > 0.12) { lastMini = t; drawMini(); }
     $('mini').style.display = G.mini && G.state === 'play' ? 'block' : 'none';
   }
@@ -1097,7 +1124,77 @@ const Main = (() => {
     g.save(); g.translate(p.x * s, p.y * s); g.rotate(-p.a);
     g.fillStyle = '#ffd75e'; g.beginPath(); g.moveTo(4, 0); g.lineTo(-3, -3); g.lineTo(-3, 3); g.fill(); g.restore();
   }
+  // ---- touch aiming assist (opt-in) ----
+  // A thumb cannot aim like a mouse, so the option nudges the heading toward the
+  // nearest visible enemy. It only engages when the player is not already turning,
+  // and it never fires the gun: it buys time, not kills.
+  function aimAssist() {
+    if (!TOUCH || !Input.aim || G.state !== 'play' || Input.turn) return;
+    const p = G.player;
+    let best = null, bd = 90;                 // ~9.5 tiles: aiming past that is pointless
+    for (const e of G.enemies) {
+      if (e.dead) continue;
+      const dx = e.x - p.x, dy = e.y - p.y, d2 = dx * dx + dy * dy;
+      if (d2 < bd && Game.hasLOS(p.x, p.y, e.x, e.y)) { bd = d2; best = e; }
+    }
+    if (!best) return;
+    let rel = Math.atan2(best.y - p.y, best.x - p.x) - p.a;
+    while (rel > Math.PI) rel -= TAU;
+    while (rel < -Math.PI) rel += TAU;
+    if (Math.abs(rel) < 0.04) return;         // already roughly on target
+    Input.turn = Math.max(-0.4, Math.min(0.4, rel * 0.8));
+  }
   // ---- overlays ----
+  function toggleMap() {
+    G.mini = !G.mini;
+    const b = $('mapBtn');
+    if (b) b.textContent = G.mini ? '\u25AA ON' : '\u25AA OFF';
+  }
+  function pauseGame() {
+    if (G.state !== 'play') return;
+    Input.fwd = Input.back = Input.left = Input.right = Input.turn = Input.sprint = Input.fire = 0;
+    G.state = 'pause'; showOverlay('pause');
+  }
+  // ---- touch option panel: every assist is opt-in and lives in one place ----
+  let lastOverlay = 'title';
+  const gyroOK = typeof DeviceOrientationEvent !== 'undefined';
+  function optPanel() {
+    if (!TOUCH) return '';
+    const b = (id, label, on) => `<button data-opt="${id}" class="${on ? '' : 'off'}">${label}</button>`;
+    return '<div class="opts">' +
+      b('mode', (prefs.one ? 'ONE-THUMB' : 'TWO-THUMB') + ' MODE', true) +
+      b('mirror', 'SWAP SIDES', prefs.mirror === true) +
+      b('autofire', 'AUTO-FIRE', prefs.autofire !== false) +
+      b('aim', 'AIM ASSIST', prefs.aim === true) +
+      (gyroOK ? b('gyro', 'GYRO AIM', prefs.gyro === true) : '') +
+      b('haptics', 'HAPTICS', prefs.haptics !== false) +
+      '</div>';
+  }
+  function refreshPanel() {
+    if (!$('ov').classList.contains('hidden')) showOverlay(lastOverlay);
+  }
+  function toggleOpt(id) {
+    if (id === 'mode') prefs.one = !prefs.one;
+    else if (id === 'mirror') prefs.mirror = !prefs.mirror;
+    else if (id === 'autofire') prefs.autofire = prefs.autofire === false;
+    else if (id === 'aim') prefs.aim = !prefs.aim;
+    else if (id === 'haptics') prefs.haptics = prefs.haptics === false;
+    else if (id === 'gyro') {
+      prefs.gyro = !prefs.gyro;
+      // iOS needs a real tap to grant the sensor, and this handler is one.
+      if (prefs.gyro && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        DeviceOrientationEvent.requestPermission()
+          .then(s => { if (s !== 'granted') prefs.gyro = false; refreshPanel(); })
+          .catch(() => { prefs.gyro = false; refreshPanel(); });
+      }
+    } else return;
+    Input.autoFire = prefs.autofire !== false;
+    Input.aim = prefs.aim === true;
+    savePrefs();
+    TouchUI.release();
+    TouchUI.apply();
+    refreshPanel();
+  }
   function statLine() {
     const st = G.stats, acc = st.shots ? Math.round(100 * st.hits / st.shots) : 0;
     const t = Math.floor(G.time);
@@ -1110,20 +1207,24 @@ const Main = (() => {
   }
   function showOverlay(kind) {
     const ov = $('ov'), box = $('ovBox');
+    lastOverlay = kind;
     ov.classList.remove('hidden');
     if (kind === 'title') {
       box.innerHTML = '<h1>GRIM HALL</h1><h2>' + LEVELS[G.level].name + ' &mdash; level ' + (G.level + 1) + ' of ' + LEVELS.length + '</h2>' +
         '<div class="ctl"><b>WASD</b> move &nbsp; <b>Shift</b> sprint &nbsp; <b>mouse</b> look &nbsp; <b>click / space</b> fire<br>' +
         '<b>1 2 3</b> weapons &nbsp; <b>M</b> map &nbsp; new guns auto-equip &nbsp; ESC pauses<br>' +
-        '<b>touch</b> drag to steer &amp; walk &nbsp; tap to fire &nbsp; hold to pause &nbsp; tap <b>GUN</b> to swap<br>' +
+        (TOUCH ? '<b>left thumb</b> drag to walk &amp; strafe &nbsp; <b>right thumb</b> drag to turn &nbsp; <b>FIRE</b> hold to shoot<br>'
+               : '<b>touch</b> on a phone: two-thumb sticks appear at the bottom of the screen<br>') +
         'kill all ' + G.total + ' horrors, then reach the green <b>EXIT</b> &mdash; a secret hides in these walls</div>' +
+        optPanel() +
         '<div class="go">[ CLICK TO ENTER ]</div>';
     } else if (kind === 'dead') {
       box.innerHTML = '<h1 style="color:#a00">YOU DIED</h1><h2>the hall keeps you</h2>' +
         '<div class="stat">' + statLine() + '</div>' +
         '<div class="go">[ CLICK TO TRY AGAIN ]</div>';
     } else if (kind === 'pause') {
-      box.innerHTML = '<h1 style="font-size:34px">PAUSED</h1><div class="go">[ CLICK TO RESUME ]</div>';
+      box.innerHTML = '<h1 style="font-size:34px">PAUSED</h1>' + optPanel() +
+        '<div class="go">[ CLICK TO RESUME ]</div>';
     } else if (kind === 'win') {
       box.innerHTML = '<h1 style="color:#3f6">HALL CLEARED</h1><h2>' + LEVELS[G.level].name +
         ' is empty &mdash; on to ' + LEVELS[(G.level + 1) % LEVELS.length].name + '</h2>' +
@@ -1169,7 +1270,7 @@ const Main = (() => {
       if (Number.isFinite(v)) Sound.setVolume(v);
       Sound.mute(localStorage.getItem('gh.mute') === '1');
     } catch (e) {}
-    sndBtn.addEventListener('mousedown', e => {
+    sndBtn.addEventListener('pointerdown', e => {
       e.stopPropagation();
       Sound.mute(!Sound.muted);
       try { localStorage.setItem('gh.mute', Sound.muted ? '1' : '0'); } catch (err) {}
@@ -1185,9 +1286,10 @@ const Main = (() => {
       if (k === '1') Input.wantW = 0;
       if (k === '2') Input.wantW = 1;
       if (k === '3') Input.wantW = 2;
-      if (k === 'm') G.mini = !G.mini;
+      if (k === 'm') toggleMap();
       if (k === 'shift') Input.sprint = 1;
       if (k === 'arrowleft' || k === 'arrowright') { arrowTurn(); e.preventDefault(); }
+      if (k === 'escape') pauseGame();
       if (k === 'v') {
         Sound.mute(!Sound.muted);
         try { localStorage.setItem('gh.mute', Sound.muted ? '1' : '0'); } catch (err) {}
@@ -1207,11 +1309,8 @@ const Main = (() => {
       if (k === 'arrowleft' || k === 'arrowright') arrowTurn();
     });
     const cv = () => renderer.domElement;
-    document.addEventListener('mousedown', e => {
-      if (e.button !== 0) return;
-      // only canvas taps are duplicated by the touch stick; the overlay's
-      // resume/start tap must never be swallowed by that guard
-      if (e.target === cv() && performance.now() - lastTouch < 400) return;
+    // one click path shared by the mouse and a tap on the title/pause panels
+    function canvasClick() {
       if (G.state === 'pause') {
         G.state = 'play'; $('ov').classList.add('hidden');
         if (cv().requestPointerLock) cv().requestPointerLock();
@@ -1224,7 +1323,26 @@ const Main = (() => {
       }
       Input.fire = 1; Input.fireEdge = 1;
       if (document.pointerLockElement !== cv() && cv().requestPointerLock) cv().requestPointerLock();
+    }
+    document.addEventListener('mousedown', e => {
+      if (e.button !== 0) return;
+      // the option buttons in the panel are not a "resume" tap
+      if (e.target && e.target.closest && e.target.closest('.opts')) return;
+      // only canvas taps are duplicated by the touch stick; the overlay's
+      // resume/start tap must never be swallowed by that guard
+      if (e.target === cv() && performance.now() - lastTouch < 400) return;
+      canvasClick();
     });
+    // touch-only assist switches, all opt-in, all persisted
+    $('ovBox').addEventListener('pointerdown', e => {
+      const b = e.target.closest && e.target.closest('button[data-opt]');
+      if (!b) return;
+      e.preventDefault(); e.stopPropagation();
+      toggleOpt(b.dataset.opt);
+    });
+    // a phone session is interrupted constantly (a call, a notification, the
+    // browser tab switching). Come back to a paused hall, never a dead run.
+    document.addEventListener('visibilitychange', () => { if (document.hidden) pauseGame(); });
     // only a lost lock pauses: a phone never gets one in the first place
     let hadLock = false;
     document.addEventListener('pointerlockchange', () => {
@@ -1239,65 +1357,235 @@ const Main = (() => {
     });
     cv().addEventListener('contextmenu', e => e.preventDefault());
 
-    // ---- touch: drag to steer and walk, tap to fire, hold (without dragging) to pause ----
-    // A finger leaves no pointer lock, so the whole control surface is one
-    // virtual stick anchored where the finger first lands.
-    const STEER = 34;                        // px of drag for full turn / walk rate
-    const DEAD = 12;                         // less than this is a tap, not a drag
-    const TAP_MS = 320, HOLD_MS = 800;
-    const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
-    let touch = null;
-    const stopStick = () => { Input.turn = Input.fwd = Input.back = 0; };
-    cv().addEventListener('touchstart', e => {
-      lastTouch = performance.now();
-      if (G.state !== 'play') return;
-      const p = e.touches[0];
-      touch = { ox: p.clientX, oy: p.clientY, t0: lastTouch, dragged: false };
-      touch.hold = setTimeout(() => {
-        if (G.state === 'play') { stopStick(); G.state = 'pause'; showOverlay('pause'); }
-      }, HOLD_MS);
-      e.preventDefault();
-    }, { passive: false });
-    cv().addEventListener('touchmove', e => {
-      if (!touch || G.state !== 'play') return;
-      const p = e.touches[0];
-      const dx = p.clientX - touch.ox, dy = p.clientY - touch.oy;
-      if (Math.hypot(dx, dy) > DEAD) {
-        if (!touch.dragged) { touch.dragged = true; clearTimeout(touch.hold); }  // a drag never pauses
-        Input.turn = clamp(dx / STEER, -1, 1);
-        Input.fwd = clamp(-dy / STEER, 0, 1);
-        Input.back = clamp(dy / STEER, 0, 1);
+    // arrow-key turning (no polling interval: it would overwrite the touch stick)
+    const arrowTurn = () => { Input.turn = (keys.arrowleft ? -1 : 0) + (keys.arrowright ? 1 : 0); };
+
+    // ---- touch: a visible two-thumb control surface --------------------------
+    // Left thumb  = floating move stick (walk/strafe, sprint at full push)
+    // Right thumb = look stick (turn), tap = fire fallback
+    // Bottom right= FIRE pad (hold = continuous fire)
+    // ONE-THUMB mode (option panel): the whole screen is one floating stick —
+    // drag toward where you want to go, the camera swings to it and you walk.
+    // Pointer Events instead of touch events: one pointerId per finger, so move +
+    // look + fire can happen at once, pointercancel catches fingers that vanish
+    // under a notification shade, and cancelling the touch pointerdown kills the
+    // phantom compatibility mousedown that made mouse+touch code double-fire.
+    if (!TOUCH) {
+      $('gunCell').addEventListener('mousedown', swapGun);
+      return;
+    }
+    document.body.classList.add('touch');
+    Input.autoFire = prefs.autofire !== false;
+    Input.aim = prefs.aim === true;
+
+    const moveEl = $('moveStick'), moveKnob = moveEl.firstElementChild;
+    const lookEl = $('lookStick'), lookKnob = lookEl.firstElementChild, firePad = $('firePad');
+    const tip = $('tip');
+    $('touchUI').classList.remove('hidden');
+    const TAP_MS = 320;                       // a tap that never dragged is a trigger pull
+    const FIRE_W = 66;                        // fire pad size (>= the 44 px minimum)
+    let R = 44, DEAD = 11, STEER = 34;        // stick radius, its dead zone, drag for full turn
+    let tipTimer = 0;
+
+    // read the safe-area insets once (they only exist with viewport-fit=cover)
+    const probe = document.createElement('div');
+    probe.style.cssText = 'position:absolute;left:0;top:0;margin:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)';
+    document.body.appendChild(probe);
+    const pc = getComputedStyle(probe);
+    const SAFE = { t: +pc.marginTop || 0, r: +pc.marginRight || 0, b: +pc.marginBottom || 0, l: +pc.marginLeft || 0 };
+    probe.remove();
+
+    function layoutTouch() {
+      // big enough to feel like a stick, small enough not to eat the screen
+      R = Math.max(30, Math.min(64, 0.13 * Math.min(innerWidth, innerHeight)));
+      DEAD = R * 0.25;                        // a thumb jittering inside this is not a step
+      STEER = Math.max(22, R * 0.7);          // turn rate scales with the stick, not the screen
+      for (const el of [moveEl, lookEl]) el.style.width = el.style.height = (2 * R) + 'px';
+      // Rest the controls in the empty letterbox bars, clear of the HUD and the
+      // notch. A hidden HUD reports nothing, so fall back to the height CSS gives
+      // it (1/8 of the canvas) instead of letting the sticks sit under it.
+      const hudH = Math.min(innerWidth, innerHeight * 1.6) / 8;
+      const hudTop = $('hud').classList.contains('hidden') ? innerHeight - hudH - SAFE.b
+                                                           : $('hud').getBoundingClientRect().top;
+      const floor = Math.min(innerHeight - SAFE.b, hudTop) - 12;
+      if (prefs.mirror) {
+        // left-handed: move stick bottom right, fire pad bottom left
+        moveEl.style.left = (innerWidth - SAFE.r - 12 - 2 * R) + 'px';
+        firePad.style.left = (SAFE.l + 12) + 'px';
       } else {
-        stopStick();
+        moveEl.style.left = (SAFE.l + 12) + 'px';
+        firePad.style.left = (innerWidth - SAFE.r - 12 - FIRE_W) + 'px';
       }
-      e.preventDefault();
-    }, { passive: false });
-    const endTouch = e => {
-      lastTouch = performance.now();
-      if (!touch) return;
-      clearTimeout(touch.hold);
-      if (!touch.dragged && performance.now() - touch.t0 < TAP_MS) {
-        // the trigger has to stay down long enough for a sim frame to see it
+      moveEl.style.top = (floor - 2 * R) + 'px';
+      firePad.style.top = (floor - FIRE_W) + 'px';
+      if (tip) {
+        const L = prefs.mirror ? 'RIGHT THUMB' : 'LEFT THUMB';
+        const Rt = prefs.mirror ? 'LEFT THUMB' : 'RIGHT THUMB';
+        tip.textContent = prefs.one
+          ? 'DRAG WHERE YOU WANT TO GO · TAP TO SHOOT · FIRE: HOLD'
+          : L + ' drag to move · ' + Rt + ' drag to turn · FIRE hold to shoot';
+        tip.style.animation = 'none'; tip.style.opacity = '1';
+        clearTimeout(tipTimer);
+        tipTimer = setTimeout(() => { tip.style.opacity = '0'; }, 7000);
+      }
+    }
+    layoutTouch();
+    window.addEventListener('resize', layoutTouch);
+    TouchUI.apply = layoutTouch;
+
+    const move = { id: -1, ox: 0, oy: 0, dragged: false, t0: 0, combo: false };
+    const look = { id: -1, ox: 0, oy: 0, dragged: false, t0: 0 };
+    const zeroMove = () => { Input.fwd = Input.back = Input.left = Input.right = Input.sprint = 0; };
+
+    function endMove() {
+      if (move.id < 0) return;
+      // one-thumb mode has no dedicated fire button in the way, so a flick-less
+      // tap on the stick is the trigger
+      if (move.combo && !move.dragged && performance.now() - move.t0 < TAP_MS) {
         Input.fire = 1; Input.fireEdge = 1;
-        setTimeout(() => { Input.fire = 0; }, 120);
+        setTimeout(() => { Input.fire = 0; }, 120);   // long enough for one sim frame
       }
-      stopStick();
-      touch = null;
-      e.preventDefault();
+      move.id = -1; zeroMove();
+      if (move.combo) Input.turn = 0;
+      moveEl.classList.remove('on', 'sprint'); moveEl.classList.add('rest');
+      moveKnob.style.transform = 'translate(0,0)';
+    }
+    function endLook() {
+      if (look.id < 0) return;
+      if (!look.dragged && performance.now() - look.t0 < TAP_MS) {
+        Input.fire = 1; Input.fireEdge = 1;
+        setTimeout(() => { Input.fire = 0; }, 120);   // long enough for one sim frame
+      }
+      look.id = -1; Input.turn = 0;
+      lookEl.classList.remove('on');
+      lookKnob.style.transform = 'translate(0,0)';
+    }
+    const endFire = () => { Input.fire = 0; firePad.classList.remove('down'); };
+    TouchUI.release = () => { endMove(); endLook(); endFire(); };
+    const releasePointer = e => {
+      lastTouch = performance.now();
+      if (e.pointerId === move.id) endMove();
+      if (e.pointerId === look.id) endLook();
+      if (e.target === firePad) endFire();
     };
-    cv().addEventListener('touchend', endTouch);
-    cv().addEventListener('touchcancel', endTouch);
-    // the HUD gun cell is the only weapon swap that works without a keyboard
-    $('gunCell').addEventListener('mousedown', e => {
-      e.stopPropagation();
+
+    document.addEventListener('pointerdown', e => {
+      if (e.pointerType === 'mouse' || e.pointerType === 'pen') return;   // desktop keeps the mouse path
+      lastTouch = performance.now();
+      const isFire = e.target === firePad;
+      if (!isFire && e.target.closest && e.target.closest('#hud,#ov,#mini,#tip')) return;  // real buttons
+      if (G.state !== 'play') {
+        if (isFire || e.target === cv()) { e.preventDefault(); canvasClick(); }
+        return;
+      }
+      e.preventDefault();                        // no page zoom, no phantom click
+      if (isFire) {
+        firePad.classList.add('down');
+        Input.fire = 1; Input.fireEdge = 1;
+        return;
+      }
+      // two-thumb: left half walks, right half looks (mirrored if the player
+      // plays left-handed). one-thumb: every contact is the move stick, and
+      // pointing it is the same as facing that way.
+      const s = (!prefs.one && ((e.clientX >= innerWidth * 0.5) !== !!prefs.mirror)) ? look : move;
+      move.combo = !!prefs.one;
+      s.id = e.pointerId; s.ox = e.clientX; s.oy = e.clientY;
+      s.dragged = false; s.t0 = lastTouch;
+      const el = s === move ? moveEl : lookEl;
+      el.classList.remove('rest'); el.classList.add('on');
+      el.style.left = (e.clientX - R) + 'px';
+      el.style.top = (e.clientY - R) + 'px';
+    }, { passive: false });
+    document.addEventListener('pointermove', e => {
+      if (G.state !== 'play') return;
+      if (e.pointerId === move.id) {
+        let dx = e.clientX - move.ox, dy = e.clientY - move.oy, d = Math.hypot(dx, dy);
+        if (d > DEAD) move.dragged = true;
+        if (d <= DEAD) {                          // a resting thumb is not a step
+          zeroMove(); if (move.combo) Input.turn = 0;
+          moveEl.classList.remove('sprint');
+          moveKnob.style.transform = 'translate(0,0)';
+          return;
+        }
+        const ux = dx / d, uy = dy / d;
+        // thumb drift: a thumb that keeps sliding takes the base with it, so
+        // reversing direction is a flick, not a trek back across the screen
+        if (d > R) {
+          const ex = d - R;
+          move.ox += ux * ex; move.oy += uy * ex;
+          moveEl.style.left = Math.max(0, Math.min(innerWidth - 2 * R, move.ox - R)) + 'px';
+          moveEl.style.top = Math.max(0, Math.min(innerHeight - 2 * R, move.oy - R)) + 'px';
+          d = R;
+        }
+        const k = Math.min(1, d / R);             // analog, not binary
+        if (move.combo) {
+          let rel = Math.atan2(uy, ux) - G.player.a;
+          while (rel > Math.PI) rel -= TAU;
+          while (rel < -Math.PI) rel += TAU;
+          Input.turn = Math.max(-1, Math.min(1, rel * 1.3));
+          Input.fwd = k; Input.back = Input.left = Input.right = 0;
+        } else {
+          Input.fwd    = Math.max(0, -uy) * k;
+          Input.back   = Math.max(0,  uy) * k;
+          Input.right  = Math.max(0,  ux) * k;
+          Input.left   = Math.max(0, -ux) * k;
+        }
+        Input.sprint = k >= 0.85 ? 1 : 0;
+        moveEl.classList.toggle('sprint', Input.sprint === 1);
+        const off = Math.min(d, R);
+        moveKnob.style.transform = 'translate(' + (ux * off) + 'px,' + (uy * off) + 'px)';
+      } else if (e.pointerId === look.id) {
+        let dx = e.clientX - look.ox, dy = e.clientY - look.oy;
+        if (Math.hypot(dx, dy) > DEAD) look.dragged = true;
+        // the look anchor follows the thumb past STEER px, so a long sweep keeps
+        // turning and flicking back reverses it immediately
+        if (dx > STEER) { look.ox += dx - STEER; dx = STEER; }
+        else if (dx < -STEER) { look.ox += dx + STEER; dx = -STEER; }
+        Input.turn = Math.abs(dx) <= DEAD ? 0 : Math.max(-1, Math.min(1, dx / STEER));
+        lookKnob.style.transform = 'translate(' + dx + 'px,' + Math.max(-R, Math.min(R, dy)) + 'px)';
+      }
+    }, { passive: false });
+
+    document.addEventListener('pointerup', releasePointer);
+    document.addEventListener('pointercancel', releasePointer);   // the finger can just vanish
+    moveEl.classList.add('rest');
+
+    // ---- optional gyro aim ----
+    // Turning the phone is closer to 1:1 with looking than a thumb stick is, and
+    // the touch-adaptation literature consistently rates gyro + stick together as
+    // the better pair. But the sensor is not Baseline: iOS hides it behind a
+    // permission prompt that needs a real tap (the GYRO option button is that tap),
+    // so it is opt-in and the thumb stick stays the fallback.
+    if (gyroOK) {
+      let lastAlpha = null;
+      window.addEventListener('deviceorientation', e => {
+        if (!prefs.gyro) { lastAlpha = null; return; }
+        if (G.state !== 'play') return;
+        const a = e.alpha;
+        if (a === null || a === undefined) return;
+        if (lastAlpha === null) { lastAlpha = a; return; }
+        let d = a - lastAlpha;
+        if (d > 180) d -= 360; else if (d < -180) d += 360;
+        lastAlpha = a;
+        if (Math.abs(d) < 0.2) return;                  // sensor jitter is not a turn
+        G.player.a += d * (Math.PI / 180) * 0.9;        // ~1:1 with the phone's yaw
+      });
+    }
+
+    // ---- the buttons a thumb can actually reach ----
+    function swapGun() {
       const p = G.player;
       for (let i = 1; i <= 3; i++) {
         const w = (p.w + i) % 3;
         if (w === 0 || (w === 1 && p.owns.sg) || (w === 2 && p.owns.mg)) { Input.wantW = w; break; }
       }
+    }
+    const hudBtn = (id, fn) => $(id).addEventListener('pointerdown', e => {
+      e.preventDefault(); e.stopPropagation(); fn();
     });
-    // arrow-key turning (no polling interval: it would overwrite the touch stick)
-    const arrowTurn = () => { Input.turn = (keys.arrowleft ? -1 : 0) + (keys.arrowright ? 1 : 0); };
+    hudBtn('gunCell', swapGun);
+    hudBtn('mapBtn', toggleMap);
+    hudBtn('pauseBtn', () => { endMove(); endLook(); endFire(); pauseGame(); });
   }
   // ---- boot ----
   window.addEventListener('load', () => {
