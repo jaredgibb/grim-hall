@@ -230,9 +230,13 @@ const Main = (() => {
         if (door && door.hint && (door.dx || door.dy)) {
           const decal = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.9),
             new THREE.MeshLambertMaterial({ map: ART.decor.poster }));
-          decal.position.set(x + 0.5 - door.dx * 0.51, 1.05, y + 0.5 - door.dy * 0.51);
-          decal.rotation.y = door.dx ? (door.dx > 0 ? Math.PI / 2 : -Math.PI / 2) : (door.dy > 0 ? 0 : Math.PI);
-          worldGroup.add(decal);
+          // The tapestry is painted on the panel itself, so it hangs on the face
+          // the player approaches from and rides with the wall as it slides,
+          // instead of left dangling in the gap the panel vacates.
+          decal.position.set(-door.dx * 0.51, 1.05 - WALL_H / 2, -door.dy * 0.51);
+          decal.rotation.y = door.dx ? (door.dx > 0 ? -Math.PI / 2 : Math.PI / 2)
+                                     : (door.dy > 0 ? Math.PI : 0);
+          m.add(decal);
         }
         doorMeshes.push({ mesh: m, door, baseY: WALL_H / 2 });
       } else if (c === 'D') {

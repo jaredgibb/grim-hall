@@ -30,13 +30,17 @@ function openBlock(w = 4, h = 3) {          // a clear rectangle of walkable flo
   const MAP = Game.grid(), W = Game.width(), H = Game.height();
   // doors count as solid until they slide open, so a "clear" block has none in it
   const open = (x, y) => x >= 1 && y >= 1 && x < W - 1 && y < H - 1 && !'#TW~D'.includes(MAP[y][x]);
-  for (let y = 1; y + h <= H - 1; y++)
-    for (let x = 1; x + w <= W - 1; x++) {
-      let ok = true;
-      for (let yy = y; yy < y + h && ok; yy++)
-        for (let xx = x; xx < x + w; xx++) if (!open(xx, yy)) { ok = false; break; }
-      if (ok) return { x: x + w / 2, y: y + h / 2, cx: x, cy: y, w, h };
-    }
+  // secret vaults cut pockets out of the open floor, so a room that is a little
+  // smaller than asked for is still a usable test ground
+  for (let ww = w; ww >= 3; ww--)
+    for (let hh = h; hh >= 3; hh--)
+      for (let y = 1; y + hh <= H - 1; y++)
+        for (let x = 1; x + ww <= W - 1; x++) {
+          let ok = true;
+          for (let yy = y; yy < y + hh && ok; yy++)
+            for (let xx = x; xx < x + ww; xx++) if (!open(xx, yy)) { ok = false; break; }
+          if (ok) return { x: x + ww / 2, y: y + hh / 2, cx: x, cy: y, w: ww, h: hh };
+        }
   return null;
 }
 function wallFace() {                        // floor cell with masonry directly west
@@ -291,6 +295,110 @@ test('chests and crowns only ever sit behind a pushwall', () => {
   }
 });
 
+// Flood fill over everything a player could walk, exactly as the sim sees it:
+// masonry, lining, planking and shut panels are all solid.
+function reach() {
+  const W = Game.width(), H = Game.height(), MAP = Game.grid();
+  const seen = Array.from({ length: H }, () => new Array(W).fill(false));
+  const q = [[Math.floor(G.player.x), Math.floor(G.player.y)]];
+  seen[q[0][1]][q[0][0]] = true;
+  while (q.length) {
+    const [x, y] = q.shift();
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H || seen[ny][nx]) continue;
+      if ('#T~W'.includes(MAP[ny][nx])) continue;
+      seen[ny][nx] = true; q.push([nx, ny]);
+    }
+  }
+  return seen;
+}
+
+
+// ---- the secret floor: the elevator is the only door down to it ----
+test('the floor that owns a secret level hangs an elevator in a vault', () => {
+  for (let i = 0; i < GH.levels.length; i++) {
+    const lvl = GH.levels[i];
+    if (lvl.secretLevel == null) continue;
+    const target = GH.levels[lvl.secretLevel];
+    assert.ok(target, `${lvl.name}: secretLevel ${lvl.secretLevel} is not a level`);
+    assert.ok(target.secret, `${lvl.name}: the floor the elevator descends to is not flagged secret`);
+    fresh(i, 42);
+    const elev = lvl.elevator;
+    assert.ok(elev, `${lvl.name}: no elevator was carved, so the secret floor is unreachable`);
+    assert.strictEqual(elev.to, lvl.secretLevel, `${lvl.name}: the hatch links to its secret floor`);
+    // the census of the 60 originals: 231 single tiles, 24 pairs, 12 triples
+    assert.ok(elev.cells.length >= 1 && elev.cells.length <= 3,
+      `${lvl.name}: the car is ${elev.cells.length} squares; the originals used one to three`);
+    for (const [x, y] of elev.cells)
+      assert.strictEqual(Game.cell(x, y), 'E', `${lvl.name}: hatch tile ${x},${y} is not elevator floor`);
+  }
+});
+
+test('no elevator opens on an ordinary floor', () => {
+  for (const lvl of GH.levels) {
+    if (!lvl.elevator) continue;
+    assert.ok(lvl.secretLevel != null, `${lvl.name}: an elevator with no secret floor behind it`);
+    assert.ok(GH.levels[lvl.secretLevel].secret, `${lvl.name}: its elevator opens on an ordinary floor`);
+    assert.ok(!lvl.secret, `${lvl.name}: a secret floor should not own a further elevator`);
+  }
+});
+
+test('the elevator car is a block, not a scatter of loose tiles', () => {
+  for (const lvl of GH.levels) {
+    const elev = lvl.elevator;
+    if (!elev) continue;
+    const W = lvl.map[0].length;
+    const car = new Set(elev.cells.map(([x, y]) => y * W + x));
+    for (const [x, y] of elev.cells) {
+      const joined = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+        .some(([dx, dy]) => car.has((y + dy) * W + (x + dx)));
+      assert.ok(joined, `${lvl.name}: hatch tile ${x},${y} is not joined to the car`);
+    }
+  }
+});
+
+test('the hatch stays sealed until the vault panel gives way', () => {
+  for (let i = 0; i < GH.levels.length; i++) {
+    const lvl = GH.levels[i];
+    if (!lvl.elevator) continue;
+    fresh(i, 5);
+    const shut = reach();
+    for (const [x, y] of lvl.elevator.cells)
+      assert.ok(!shut[y][x], `${lvl.name}: the elevator car is walkable before the wall ever moves`);
+    const vault = lvl.vaults.find(v => v.id === lvl.elevator.vault);
+    assert.ok(vault, `${lvl.name}: the elevator hangs in a vault that does not exist`);
+    const W = Game.width();
+    const lane = new Set();
+    for (const [px, py, dx, dy] of vault.panels)
+      for (let a = 1; a <= 4; a++) lane.add((py + dy * a) * W + (px + dx * a));
+    G.enemies = G.enemies.filter(e => !lane.has(Math.floor(e.y) * W + Math.floor(e.x)));
+    for (const it of G.items) if (lane.has(Math.floor(it.y) * W + Math.floor(it.x))) it.taken = true;
+    for (const [px, py, dx, dy] of vault.panels) {
+      const panel = G.doors.find(d => d.push && d.cx === px && d.cy === py);
+      assert.ok(panel && Game.tryPushwall(panel, dx, dy), `${lvl.name}: the elevator panel would not slide`);
+    }
+    const open = reach();
+    for (const [x, y] of lvl.elevator.cells)
+      assert.ok(open[y][x], `${lvl.name}: the car is still sealed after its panel slid`);
+  }
+});
+
+test('standing on the hatch rides the player down to the secret floor', () => {
+  const idx = GH.levels.findIndex(l => l.elevator);
+  assert.ok(idx >= 0, 'some floor has a secret elevator');
+  fresh(idx, 6);
+  const [hx, hy] = GH.levels[idx].elevator.cells[0];
+  const p = G.player;
+  p.x = hx + 0.5; p.y = hy + 0.5;
+  G.fx.length = 0;
+  Game.update(DT);
+  assert.strictEqual(G.gotoLevel, GH.levels[idx].secretLevel, 'the hatch flags the secret floor as the destination');
+  assert.ok(G.fx.some(f => f.kind === 'msg' && f.text === 'SECRET ELEVATOR'), 'the ride is announced');
+  Game.update(DT);
+  assert.strictEqual(G.gotoLevel, GH.levels[idx].secretLevel, 'the hatch must not queue the ride twice');
+  assert.strictEqual(G.level, idx, 'the sim only flags the trip; the world is rebuilt on the next frame');
+});
 
 test('the flow field never routes enemies through a pushwall', () => {
   fresh(0, 15);

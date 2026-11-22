@@ -1387,28 +1387,45 @@
   // vault lining: brass-plated panels with rivets, so a treasure chamber reads as
   // a manufactured room rather than more of the same dungeon brick
   function vaultMetal(theme) {
-    const s = mkc(TS, TS), g = s.getContext('2d');
-    g.fillStyle = 'rgb(' + theme.metal.join(',') + ')'; g.fillRect(0, 0, TS, TS);
+    const pal = THEMES[theme] || THEMES.hall;
+    const s = mkSet(), g = s.g, hg = s.hg, rg = s.rg;
+    s.glow = !!pal.glow;
+    s.glowColor = pal.glow || null;
+    g.fillStyle = 'rgb(' + pal.metal.join(',') + ')'; g.fillRect(0, 0, TS, TS);
+    hg.fillStyle = '#5a5a5a'; hg.fillRect(0, 0, TS, TS);      // the plate sits proud of the rock
+    rg.fillStyle = '#7a7a7a'; rg.fillRect(0, 0, TS, TS);      // plated steel, smoother than brick
     for (let i = 0; i < 4; i++) {
       const y0 = i * 32;
-      g.fillStyle = 'rgb(' + (theme.metal[0] + 12) + ',' + (theme.metal[1] + 14) + ',' + (theme.metal[2] + 18) + ')';
+      g.fillStyle = 'rgb(' + (pal.metal[0] + 12) + ',' + (pal.metal[1] + 14) + ',' + (pal.metal[2] + 18) + ')';
       g.fillRect(0, y0 + 3, TS, 26);
+      hg.fillStyle = '#c4c4c4'; hg.fillRect(0, y0 + 3, TS, 26);
       g.fillStyle = '#1a1d22'; g.fillRect(0, y0 + 29, TS, 3);
+      hg.fillStyle = '#121212'; hg.fillRect(0, y0 + 29, TS, 3);   // the seam is a groove
+      rg.fillStyle = '#d0d0d0'; rg.fillRect(0, y0 + 29, TS, 3);   // grit in the joint
       for (let x = 8; x < TS; x += 24) {
         g.fillStyle = '#dfe6ee'; g.beginPath(); g.arc(x, y0 + 8, 2, 0, Math.PI * 2); g.fill();
         g.fillStyle = '#0d1014'; g.beginPath(); g.arc(x, y0 + 9, 1.2, 0, Math.PI * 2); g.fill();
+        hg.fillStyle = '#e8e8e8'; hg.beginPath(); hg.arc(x, y0 + 8, 2, 0, Math.PI * 2); hg.fill();
+        rg.fillStyle = '#2a2a2a'; rg.beginPath(); rg.arc(x, y0 + 8, 2, 0, Math.PI * 2); rg.fill();
       }
     }
     // gold sheen along the seam: the lining is plated, not bare steel
     g.fillStyle = 'rgba(201, 180, 88, 0.22)'; g.fillRect(0, 0, TS, TS);
     noise(g, TS, TS, 110, 0.06, 0.16, 2);
+    hg.fillStyle = '#808080'; noise(hg, TS, TS, 90, 0.04, 0.10, 2);
+    rg.fillStyle = '#b0b0b0'; noise(rg, TS, TS, 90, 0.04, 0.10, 2);
     return s;
   }
   // vault floor: dark slabs inlaid with gold veins and scattered coin
   function goldFloor(theme) {
-    const s = mkc(TS, TS), g = s.getContext('2d');
-    g.fillStyle = 'rgb(' + (theme.brick[0] - 12) + ',' + (theme.brick[1] - 14) + ',' + (theme.brick[2] - 16) + ')';
+    const pal = THEMES[theme] || THEMES.hall;
+    const s = mkSet(), g = s.g, hg = s.hg, rg = s.rg;
+    s.glow = !!pal.glow;
+    s.glowColor = pal.glow || null;
+    g.fillStyle = 'rgb(' + (pal.brick[0] - 12) + ',' + (pal.brick[1] - 14) + ',' + (pal.brick[2] - 16) + ')';
     g.fillRect(0, 0, TS, TS);
+    hg.fillStyle = '#404040'; hg.fillRect(0, 0, TS, TS);
+    rg.fillStyle = '#c8c8c8'; rg.fillRect(0, 0, TS, TS);        // gold inlay polishes up
     for (let y = 0; y < TS; y += 32) { g.fillStyle = '#0b0d10'; g.fillRect(0, y, TS, 2); }
     for (let x = 0; x < TS; x += 32) { g.fillStyle = '#0b0d10'; g.fillRect(x, 0, 2, TS); }
     g.strokeStyle = GOLD; g.lineWidth = 2;
@@ -1422,8 +1439,11 @@
     for (let i = 0; i < 10; i++) {
       const x = (rnd() * TS) | 0, y = (rnd() * TS) | 0;
       g.fillStyle = GOLD_L; g.beginPath(); g.arc(x, y, 1.6, 0, Math.PI * 2); g.fill();
+      hg.fillStyle = '#d8d8d8'; hg.beginPath(); hg.arc(x, y, 1.6, 0, Math.PI * 2); hg.fill();
     }
     noise(g, TS, TS, 120, 0.05, 0.12, 2);
+    hg.fillStyle = '#707070'; noise(hg, TS, TS, 90, 0.04, 0.10, 2);
+    rg.fillStyle = '#606060'; noise(rg, TS, TS, 90, 0.04, 0.10, 2);
     return s;
   }
 
