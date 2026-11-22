@@ -30,7 +30,7 @@ const Main = (() => {
   // forced on is an assist some players cannot turn off.
   const prefs = (() => { try { return JSON.parse(localStorage.getItem('gh.touch') || '{}'); } catch (e) { return {}; } })();
   const savePrefs = () => { try { localStorage.setItem('gh.touch', JSON.stringify(prefs)); } catch (e) {} };
-  const TouchUI = { apply: () => {}, release: () => {} };
+  const TouchUI = { apply: () => {}, release: () => {}, update: () => {} };
   NS.touch = TouchUI;   // the debug harness and console can reach the touch layer
   let lastHitDirT = 0;   // used to detect a *new* damage event for the haptic ping
 
@@ -79,6 +79,7 @@ const Main = (() => {
       // phone you just keep pushing, so a held trigger re-edges the semi-auto guns.
       if (Input.fire && Input.autoFire) Input.fireEdge = 1;
       aimAssist();
+      TouchUI.update();
       Game.update(dt);
       if (G.state !== lastState) {              // music follows the game state
         if (G.state === 'play') Music.start(); else Music.stop();
@@ -1166,6 +1167,7 @@ const Main = (() => {
       b('mirror', 'SWAP SIDES', prefs.mirror === true) +
       b('autofire', 'AUTO-FIRE', prefs.autofire !== false) +
       b('aim', 'AIM ASSIST', prefs.aim === true) +
+      b('sens', 'LOOK ' + (prefs.sens === 'high' ? 'HIGH' : prefs.sens === 'low' ? 'LOW' : 'MED'), true) +
       (gyroOK ? b('gyro', 'GYRO AIM', prefs.gyro === true) : '') +
       b('haptics', 'HAPTICS', prefs.haptics !== false) +
       '</div>';
@@ -1178,6 +1180,7 @@ const Main = (() => {
     else if (id === 'mirror') prefs.mirror = !prefs.mirror;
     else if (id === 'autofire') prefs.autofire = prefs.autofire === false;
     else if (id === 'aim') prefs.aim = !prefs.aim;
+    else if (id === 'sens') prefs.sens = (prefs.sens || 'med') === 'med' ? 'high' : prefs.sens === 'high' ? 'low' : 'med';
     else if (id === 'haptics') prefs.haptics = prefs.haptics === false;
     else if (id === 'gyro') {
       prefs.gyro = !prefs.gyro;
@@ -1385,6 +1388,7 @@ const Main = (() => {
     const TAP_MS = 320;                       // a tap that never dragged is a trigger pull
     const FIRE_W = 66;                        // fire pad size (>= the 44 px minimum)
     let R = 44, DEAD = 11, STEER = 34;        // stick radius, its dead zone, drag for full turn
+    const SENS = { low: 1.4, med: 1, high: 0.7 };   // px of drag needed for a full turn
     let tipTimer = 0;
 
     // read the safe-area insets once (they only exist with viewport-fit=cover)
@@ -1399,7 +1403,7 @@ const Main = (() => {
       // big enough to feel like a stick, small enough not to eat the screen
       R = Math.max(30, Math.min(64, 0.13 * Math.min(innerWidth, innerHeight)));
       DEAD = R * 0.25;                        // a thumb jittering inside this is not a step
-      STEER = Math.max(22, R * 0.7);          // turn rate scales with the stick, not the screen
+      STEER = Math.max(22, R * 0.7) * (SENS[prefs.sens] || 1);   // turn rate scales with the stick
       for (const el of [moveEl, lookEl]) el.style.width = el.style.height = (2 * R) + 'px';
       // Rest the controls in the empty letterbox bars, clear of the HUD and the
       // notch. A hidden HUD reports nothing, so fall back to the height CSS gives
@@ -1408,22 +1412,25 @@ const Main = (() => {
       const hudTop = $('hud').classList.contains('hidden') ? innerHeight - hudH - SAFE.b
                                                            : $('hud').getBoundingClientRect().top;
       const floor = Math.min(innerHeight - SAFE.b, hudTop) - 12;
-      if (prefs.mirror) {
-        // left-handed: move stick bottom right, fire pad bottom left
-        moveEl.style.left = (innerWidth - SAFE.r - 12 - 2 * R) + 'px';
-        firePad.style.left = (SAFE.l + 12) + 'px';
-      } else {
-        moveEl.style.left = (SAFE.l + 12) + 'px';
-        firePad.style.left = (innerWidth - SAFE.r - 12 - FIRE_W) + 'px';
-      }
-      moveEl.style.top = (floor - 2 * R) + 'px';
-      firePad.style.top = (floor - FIRE_W) + 'px';
+      const moveX = prefs.mirror ? (innerWidth - SAFE.r - 12 - 2 * R) : (SAFE.l + 12);
+      const fireX = prefs.mirror ? (SAFE.l + 12) : (innerWidth - SAFE.r - 12 - FIRE_W);
+      // the look stick gets a resting home too, opposite the move stick and beside
+      // the fire pad. A control you cannot see is a control you cannot find.
+      const lookX = prefs.mirror ? (fireX + FIRE_W + 14) : (fireX - 14 - 2 * R);
+      home.move = [moveX, floor - 2 * R];
+      home.look = [lookX, floor - 2 * R];
+      moveEl.style.left = moveX + 'px'; moveEl.style.top = home.move[1] + 'px';
+      firePad.style.left = fireX + 'px'; firePad.style.top = (floor - FIRE_W) + 'px';
+      lookEl.style.left = lookX + 'px'; lookEl.style.top = home.look[1] + 'px';
       if (tip) {
         const L = prefs.mirror ? 'RIGHT THUMB' : 'LEFT THUMB';
         const Rt = prefs.mirror ? 'LEFT THUMB' : 'RIGHT THUMB';
         tip.textContent = prefs.one
           ? 'DRAG WHERE YOU WANT TO GO · TAP TO SHOOT · FIRE: HOLD'
           : L + ' drag to move · ' + Rt + ' drag to turn · FIRE hold to shoot';
+        // the view is a fixed 16:10 box, so a portrait phone wastes half its
+        // pixels on letterbox. Say so once, plainly.
+        if (innerHeight > innerWidth) tip.textContent = 'ROTATE FOR A BIGGER VIEW · ' + tip.textContent;
         tip.style.animation = 'none'; tip.style.opacity = '1';
         clearTimeout(tipTimer);
         tipTimer = setTimeout(() => { tip.style.opacity = '0'; }, 7000);
@@ -1433,18 +1440,25 @@ const Main = (() => {
     window.addEventListener('resize', layoutTouch);
     TouchUI.apply = layoutTouch;
 
-    const move = { id: -1, ox: 0, oy: 0, dragged: false, t0: 0, combo: false };
+    const move = { id: -1, ox: 0, oy: 0, dragged: false, t0: 0, combo: false, a0: 0, dir: 0 };
     const look = { id: -1, ox: 0, oy: 0, dragged: false, t0: 0 };
     const zeroMove = () => { Input.fwd = Input.back = Input.left = Input.right = Input.sprint = 0; };
+    const wrap = (a) => { while (a > Math.PI) a -= TAU; while (a < -Math.PI) a += TAU; return a; };
 
+    // A tap is one trigger pull, not a held trigger. If the action is still
+    // cooling when the tap lands, hold the beat so the shot is not swallowed -
+    // a thumb tap is far quicker than a 0.9 s shotgun cycle.
+    let tapUntil = 0, tapShots = 0, padDown = false;
+    const tapFire = () => {
+      tapShots = G.stats.shots;
+      tapUntil = performance.now() + 900;
+      Input.fire = 1; Input.fireEdge = 1;
+    };
     function endMove() {
       if (move.id < 0) return;
       // one-thumb mode has no dedicated fire button in the way, so a flick-less
       // tap on the stick is the trigger
-      if (move.combo && !move.dragged && performance.now() - move.t0 < TAP_MS) {
-        Input.fire = 1; Input.fireEdge = 1;
-        setTimeout(() => { Input.fire = 0; }, 120);   // long enough for one sim frame
-      }
+      if (move.combo && !move.dragged && performance.now() - move.t0 < TAP_MS) tapFire();
       move.id = -1; zeroMove();
       if (move.combo) Input.turn = 0;
       moveEl.classList.remove('on', 'sprint'); moveEl.classList.add('rest');
@@ -1452,16 +1466,26 @@ const Main = (() => {
     }
     function endLook() {
       if (look.id < 0) return;
-      if (!look.dragged && performance.now() - look.t0 < TAP_MS) {
-        Input.fire = 1; Input.fireEdge = 1;
-        setTimeout(() => { Input.fire = 0; }, 120);   // long enough for one sim frame
-      }
+      if (!look.dragged && performance.now() - look.t0 < TAP_MS) tapFire();
       look.id = -1; Input.turn = 0;
       lookEl.classList.remove('on');
       lookKnob.style.transform = 'translate(0,0)';
     }
-    const endFire = () => { Input.fire = 0; firePad.classList.remove('down'); };
+    const endFire = () => { padDown = false; Input.fire = 0; firePad.classList.remove('down'); };
     TouchUI.release = () => { endMove(); endLook(); endFire(); };
+    // One-thumb steering has to be re-evaluated every frame: the finger stays
+    // put while the heading changes, so the turn has to close the remaining angle.
+    TouchUI.update = () => {
+      if (tapUntil) {
+        if (G.stats.shots > tapShots) tapUntil = 0;          // the shot went off
+        else if (performance.now() > tapUntil) tapUntil = 0; // the moment passed
+        else { Input.fire = 1; Input.fireEdge = 1; }
+        if (!tapUntil && !padDown) Input.fire = 0;
+      }
+      if (!prefs.one || move.id < 0) return;
+      const rel = wrap(move.dir - G.player.a);
+      Input.turn = Math.max(-1, Math.min(1, rel * 1.3));
+    };
     const releasePointer = e => {
       lastTouch = performance.now();
       if (e.pointerId === move.id) endMove();
@@ -1481,6 +1505,7 @@ const Main = (() => {
       e.preventDefault();                        // no page zoom, no phantom click
       if (isFire) {
         firePad.classList.add('down');
+        padDown = true;
         Input.fire = 1; Input.fireEdge = 1;
         return;
       }
@@ -1491,6 +1516,7 @@ const Main = (() => {
       move.combo = !!prefs.one;
       s.id = e.pointerId; s.ox = e.clientX; s.oy = e.clientY;
       s.dragged = false; s.t0 = lastTouch;
+      if (s === move) { move.a0 = G.player.a; move.dir = G.player.a; }
       const el = s === move ? moveEl : lookEl;
       el.classList.remove('rest'); el.classList.add('on');
       el.style.left = (e.clientX - R) + 'px';
@@ -1519,10 +1545,10 @@ const Main = (() => {
         }
         const k = Math.min(1, d / R);             // analog, not binary
         if (move.combo) {
-          let rel = Math.atan2(uy, ux) - G.player.a;
-          while (rel > Math.PI) rel -= TAU;
-          while (rel < -Math.PI) rel += TAU;
-          Input.turn = Math.max(-1, Math.min(1, rel * 1.3));
+          // The finger points at a world direction captured when the drag began.
+          // Steering straight off "drag angle minus heading" would keep spinning:
+          // the anchor slides with the thumb, so that difference never closes.
+          move.dir = wrap(move.a0 + Math.atan2(ux, -uy));
           Input.fwd = k; Input.back = Input.left = Input.right = 0;
         } else {
           Input.fwd    = Math.max(0, -uy) * k;
@@ -1549,6 +1575,7 @@ const Main = (() => {
     document.addEventListener('pointerup', releasePointer);
     document.addEventListener('pointercancel', releasePointer);   // the finger can just vanish
     moveEl.classList.add('rest');
+    lookEl.classList.add('rest');
 
     // ---- optional gyro aim ----
     // Turning the phone is closer to 1:1 with looking than a thumb stick is, and

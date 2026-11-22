@@ -292,3 +292,128 @@ Manual protocol (the parts no harness can catch):
    stretch-fest on a compact phone.
 4. **Interruption test** — notification shade, incoming call, toolbar collapse.
 
+
+---
+
+## 5. What shipped (2026-11-21)
+
+The scheme is in `js/main.js` (touch block, ~line 1360 onward) and `index.html`
+(`#touchUI`, `#sysbar`, `body.touch` rules). Everything below was validated by
+`node .debug-touch.js` driving headless Chrome with synthetic `PointerEvent`s:
+**51 assertions, all passing.**
+
+### Gesture map
+
+| input | action | notes |
+|---|---|---|
+| left thumb drag (floating anchor) | analog 8-way move incl. strafe | the anchor follows the thumb past the radius, so reversing is a flick, not a trek |
+| left thumb pushed >= 85% of radius | sprint | stick turns red |
+| right thumb horizontal drag | turn | anchor slides past `STEER` so a long sweep keeps turning |
+| right thumb tap (no drag) | one shot | the tap is *queued* if the action is still cooling |
+| hold FIRE pad | continuous fire | `autoFire` re-edges the semi-auto guns |
+| tap in the move half | nothing | repositioning a thumb is not a trigger pull |
+| `pointercancel` | release everything | fingers vanish under notification shades |
+| tab hidden | auto-pause | a phone session is interrupted constantly |
+| `SWAP SIDES` | mirrored layout | left-handed: move right, fire left |
+| `ONE-THUMB` | drag = walk + face the drag, tap = fire | one-handed play |
+| `GYRO` | device tilt turns the camera | opt-in; iOS needs a real tap for permission |
+| `LOOK LOW/MED/HIGH` | turn-rate sensitivity | cycles, persisted |
+
+### Numbers in the code
+
+```js
+R     = Math.max(30, Math.min(64, 0.13 * Math.min(innerWidth, innerHeight))); // 64 px on 844x390
+DEAD  = R * 0.25;                                   // a resting thumb is not a step
+STEER = Math.max(22, R * 0.7) * SENS[sens];         // low 1.4, med 1.0, high 0.7
+SPRINT_AT = 0.85;                                   // fraction of stick deflection
+TAP_MS = 320;                                       // a tap that never dragged = trigger pull
+FIRE_W = 66;                                        // fire pad, >= the 44 px minimum
+```
+
+Sticks live in the letterbox bars above the HUD
+(`floor = min(innerHeight - safe, hudTop) - 12`), and the rarely-used MAP/PAUSE
+switches sit in the top-left `#sysbar` so they are never in the combat thumb path.
+
+### Three feel bugs the harness caught
+
+1. **A tap during the cooldown was swallowed.** The old tap set `fire = 1` for
+   120 ms; on a 0.9 s shotgun the whole window fell inside the cooldown and the
+   shot vanished. Now the tap is held until the action is clear and released the
+   instant the shot registers (`tapUntil` / `padDown`).
+2. **One-thumb steering overshot.** Steering on `dragAngle - heading` never
+   closes, because the anchor slides with the thumb, so the camera spun past the
+   target. The drag now captures a *world direction* at touch-down and the
+   per-frame `TouchUI.update()` turns toward it until the angle is closed
+   (measured: heading 2.01 vs target 2.01).
+3. **Move-half taps fired.** Only the look half (and the FIRE pad) is a trigger.
+
+### Running the suite
+
+```bash
+npm run test:touch                                     # harness + headless Chrome
+```
+
+Or by hand:
+
+```bash
+node test/touch-harness.js                             # writes .debug-touch.html
+agent-browser open "file://$PWD/.debug-touch.html?touch=1&auto=1"
+agent-browser wait 25000
+agent-browser get text '#touchprobe'                   # TOTAL 51/51 | PASS ...
+```
+
+Plain Chrome works too:
+
+```bash
+google-chrome --headless=new --dump-dom --window-size=1272,498 --virtual-time-budget=30000 \
+  "file://$PWD/.debug-touch.html?touch=1&auto=1" | sed -n 's/.*touchprobe[^>]*>//p'
+```
+
+---
+
+## 6. Research notes that shaped the design
+
+- **Thumb arc, not screen.** Hoober's observational study (1,333 users): 49%
+  one-handed, 36% cradled, 15% two-handed; ~75% of all touches are thumb touches.
+  Controls go where the thumb already is, not where the UI wants to be.
+- **Floating beats fixed.** A fixed corner stick misfires under a pocket grip;
+  anchoring the base where the thumb first lands is the standard fix - and the
+  base then drifts with the thumb, so a flick reverses direction instantly.
+- **Target size.** WCAG 2.2 SC 2.5.8 (AA) requires 24x24 CSS px; WCAG 2.1 AAA,
+  Apple HIG (44 pt) and Material (48 dp) all point at ~44 px. Every touch control
+  in Grim Hall is >= 44 px, and the harness asserts it.
+- **Minimal templates.** Microsoft's touch-adaptation work across 200+ streamed
+  titles: 20% of Xbox Cloud players use touch exclusively, and titles with touch
+  controls are played ~2x as often. Their guidance - left side moves, right side
+  acts, no exotic gestures - is exactly the shipped map.
+- **Tilt is good for movement, bad for aiming.** Teather, Roth & MacKenzie (2017),
+  *Tilt-touch synergy: Input control for "dual-analog" style mobile games*
+  (Entertainment Computing 21:33-43) compared touch/touch, tilt/touch,
+  touch/tilt and tilt/tilt in a dual-analog shooter: tilt-based **movement** was
+  comparable to touch, but tilt-based **orientation** significantly impaired
+  navigation. So gyro aim ships as an opt-in assist and the thumb stick stays the
+  primary look control.
+- **Fairness compensation is normal; forced assist is not.** Auto-fire, aim
+  assist and wider hit windows are near-universal in mobile shooters. All three
+  are opt-in toggles here, because the literature is consistent that forced
+  assistance is worse for some players than none.
+- **API reality.** `env(safe-area-inset-*)` and `dvh` are Baseline;
+  `DeviceOrientationEvent.requestPermission()` is not (iOS, needs transient
+  activation and HTTPS); `navigator.vibrate()` is Chrome/Android only. Haptics
+  and gyro are bonuses with a thumb fallback, never requirements.
+
+## 7. Next things worth trying
+
+1. **Portrait mode.** The view is a fixed 16:10 box, so a portrait phone wastes
+   about half the screen. The first-run tip now says "ROTATE FOR A BIGGER VIEW";
+   a stacked portrait HUD would be the next step.
+2. **Small-device audit.** Run the harness at 360x640 and 320x480 and assert no
+   control sits closer to the edge than the safe-area inset.
+3. **Turn smoothing.** `turn` is step-wise from drag distance; a 2-3 frame ramp
+   would feel less jerky on low-framerate devices.
+4. **Onboarding telemetry.** Time-to-first-shot on a fresh install: if it is more
+   than a couple of seconds, the legend tip is not doing its job.
+5. **Real-device pass.** The harness proves the mechanics, not the feel. One-handed
+   play, a silent novice, and an interruption test (notification shade, call,
+   toolbar collapse).
+

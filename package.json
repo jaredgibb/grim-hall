@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "description": "A Wolfenstein-style retro FPS: procedural art, procedural audio, no external assets except vendored Three.js r147",
   "scripts": {
-    "test": "node --test test/*.js",
+    "test": "node --test test/*.test.js",
+    "test:touch": "node test/touch-harness.js && agent-browser open \"file://$PWD/.debug-touch.html?touch=1&auto=1\" && agent-browser wait 25000 && agent-browser get text '#touchprobe' && agent-browser close",
     "serve": "python3 -m http.server 8080"
   },
   "license": "MIT"
