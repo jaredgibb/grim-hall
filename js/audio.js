@@ -55,6 +55,16 @@
     pickup() { tone(660, 0.08, 'square', 0.18); tone(880, 0.1, 'square', 0.18, null, 0.07); },
     boom(d) { const v = Math.max(0.2, 1 - (d || 0) / 14); noiseBurst(0.5, 0.8 * v, 500); tone(70, 0.4, 'sine', 0.5 * v, 30); },
     door() { tone(90, 0.3, 'sawtooth', 0.12, 140); noiseBurst(0.2, 0.1, 300); },
+    // a pushwall grinding sideways through masonry: low, long, dusty
+    rumble() { noiseBurst(0.5, 0.4, 260); tone(60, 0.5, 'sawtooth', 0.16, 40); },
+    // a pushwall grinding sideways through masonry: low, long, dusty
+    pushwall() { noiseBurst(0.6, 0.28, 300); tone(70, 0.6, 'sawtooth', 0.14, 45);
+                 tone(210, 0.18, 'square', 0.06, 120, 0.2); },
+    // the panel hits rock and stops: a short, hard clank
+    jam() { tone(140, 0.12, 'square', 0.2, 60); noiseBurst(0.15, 0.25, 900); },
+    // secret elevator: chain clanking overhead, then a long descending whoosh
+    elevator() { [180, 240, 300].forEach((f, i) => tone(f, 0.08, 'square', 0.12, null, i * 0.12));
+                 tone(300, 1.2, 'sawtooth', 0.16, 60, 0.35); noiseBurst(1.2, 0.22, 500, 0.3); },
     enemyShot(d) { const v = Math.max(0.2, 1 - (d || 0) / 18); tone(500, 0.08, 'square', 0.12 * v, 200); },
     step() { noiseBurst(0.05, 0.08, 300 + Math.random() * 200); },
     wade() { noiseBurst(0.12, 0.1, 700 + Math.random() * 300); tone(180, 0.1, 'sine', 0.07, 90); },

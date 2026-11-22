@@ -86,6 +86,15 @@ const Main = (() => {
       TouchUI.update();       // the sticks write their input first...
       aimAssist();            // ...so the assist can blend into what is left
       Game.update(dt);
+      // a secret elevator carries the player down: the sim only flags the
+      // destination, so the world is swapped exactly once, here
+      if (G.gotoLevel != null && G.state === 'play') {
+        const target = G.gotoLevel; G.gotoLevel = null;
+        G.level = target;
+        Game.buildWorld(G.level);
+        buildWorldMeshes();
+        syncExit();
+      }
       if (G.state !== lastState) {              // music follows the game state
         if (G.state === 'play') Music.start(); else Music.stop();
         lastState = G.state;
@@ -121,19 +130,28 @@ const Main = (() => {
 
     // static walls: one InstancedMesh per material instead of ~256 meshes
     const geo = new THREE.BoxGeometry(1, WALL_H, 1);
-    const brickCells = [], metalCells = [], plankCells = [];
+    const level = LEVELS[G.level] || {};
+    // the vault generator tells us which metal tiles are the lining of a
+    // treasure chamber, so those get the brass-plated material instead of the
+    // plain structural steel
+    const lining = new Set();
+    for (const v of (level.vaults || [])) for (const [x, y] of v.lining) lining.add(y * MAPW + x);
+    const brickCells = [], metalCells = [], brassCells = [], plankCells = [];
+    const vaultCells = [], elevCells = [];
     for (let y = 0; y < MAPH; y++) for (let x = 0; x < MAPW; x++) {
       const c = MAP[y][x];
       if (c === '#') brickCells.push([x, y]);
-      else if (c === 'T') metalCells.push([x, y]);
+      else if (c === 'T') (lining.has(y * MAPW + x) ? brassCells : metalCells).push([x, y]);
       else if (c === '~') plankCells.push([x, y]);
+      else if (c === 'A') vaultCells.push([x, y]);
+      else if (c === 'E') elevCells.push([x, y]);
     }
-    const addInstanced = (cells, mat) => {
+    const addInstanced = (cells, mat, g = geo, h = WALL_H) => {
       if (!cells.length) return;
-      const im = new THREE.InstancedMesh(geo, mat, cells.length);
+      const im = new THREE.InstancedMesh(g, mat, cells.length);
       const d = new THREE.Object3D();
       for (let i = 0; i < cells.length; i++) {
-        d.position.set(cells[i][0] + 0.5, WALL_H / 2, cells[i][1] + 0.5);
+        d.position.set(cells[i][0] + 0.5, h / 2, cells[i][1] + 0.5);
         d.updateMatrix();
         im.setMatrixAt(i, d.matrix);
       }
@@ -158,14 +176,65 @@ const Main = (() => {
     addInstanced(metalCells, pbrMat(ART.tex.metal, 0.45, 0.75));
     addInstanced(plankCells, pbrMat(ART.tex.plank, 0.78, 0.04));
 
+    // ---- secret vaults ----
+    // A pushwall is only worth having if the room behind it pays off: brass-plated
+    // lining, an inlaid gold floor, and warm light pooling in the chamber so the
+    // treasure reads through the gap the instant the panel gives way.
+    const goldMat = new THREE.MeshStandardMaterial({
+      map: ART.tex.metal.map, normalMap: ART.tex.metal.normal, roughnessMap: ART.tex.metal.rough,
+      roughness: 0.3, metalness: 0.85, color: 0xd9b25a,
+      emissive: new THREE.Color((ART.pal || {}).glow || '#e8c05a'), emissiveIntensity: 0.16,
+    });
+    addInstanced(brassCells, goldMat);
+    if (vaultCells.length) {
+      addInstanced(vaultCells, goldMat, new THREE.BoxGeometry(0.98, 0.04, 0.98), 0.04);
+      for (const v of (level.vaults || [])) {
+        if (!v.cells.length) continue;
+        let sx = 0, sy = 0;
+        for (const [x, y] of v.cells) { sx += x; sy += y; }
+        const l = new THREE.PointLight(0xffb455, 0.6, 5, 1.6);
+        l.position.set(sx / v.cells.length + 0.5, 1.2, sy / v.cells.length + 0.5);
+        worldGroup.add(l);
+      }
+    }
+    // secret elevator: a recessed brass hatch, a rim, and a shaft of light rising
+    // through the rock - the only way down to the hidden floor
+    for (const [x, y] of elevCells) {
+      const hatch = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.06, 24), goldMat);
+      hatch.position.set(x + 0.5, 0.03, y + 0.5); worldGroup.add(hatch);
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.05, 8, 24),
+        new THREE.MeshStandardMaterial({ color: 0x8f7c34, roughness: 0.4, metalness: 0.9 }));
+      rim.rotation.x = Math.PI / 2; rim.position.set(x + 0.5, 0.06, y + 0.5); worldGroup.add(rim);
+      if (!location.search.includes('nocone')) {
+        const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.42, WALL_H - 0.1, 20),
+          new THREE.MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.12,
+            blending: THREE.AdditiveBlending, depthWrite: false }));
+        shaft.position.set(x + 0.5, WALL_H / 2, y + 0.5); worldGroup.add(shaft);
+      }
+      const l = new THREE.PointLight(0xffd27a, 1.0, 5, 1.6);
+      l.position.set(x + 0.5, 1.1, y + 0.5); worldGroup.add(l);
+    }
+
     // doors and pushwalls animate individually, and keep a direct ref to their logic object
     for (let y = 0; y < MAPH; y++) for (let x = 0; x < MAPW; x++) {
       const c = MAP[y][x];
-      if (c === 'W') { // pushwall: looks like brick, slides up when approached
+      if (c === 'W') { // pushwall: looks like brick, slides when shoved
         const m = new THREE.Mesh(geo, pbrMat(ART.tex.brick, 0.92, 0.05));
         m.position.set(x + 0.5, WALL_H / 2, y + 0.5);
         worldGroup.add(m);
-        doorMeshes.push({ mesh: m, door: G.doors.find(d => d.cx === x && d.cy === y), baseY: WALL_H / 2 });
+        const door = G.doors.find(d => d.cx === x && d.cy === y);
+        // Marking the panel (bible 4.69): id hinted a secret by putting a
+        // different texture on the wall itself - the eagle tapestry over the
+        // first pushwall in E1M1. The picture hangs on the face the player
+        // approaches from, so the hint is visible before the wall ever moves.
+        if (door && door.hint && (door.dx || door.dy)) {
+          const decal = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.9),
+            new THREE.MeshLambertMaterial({ map: ART.decor.poster }));
+          decal.position.set(x + 0.5 - door.dx * 0.51, 1.05, y + 0.5 - door.dy * 0.51);
+          decal.rotation.y = door.dx ? (door.dx > 0 ? Math.PI / 2 : -Math.PI / 2) : (door.dy > 0 ? 0 : Math.PI);
+          worldGroup.add(decal);
+        }
+        doorMeshes.push({ mesh: m, door, baseY: WALL_H / 2 });
       } else if (c === 'D') {
         const g2 = new THREE.BoxGeometry(0.94, WALL_H, 0.12);
         const m = new THREE.Mesh(g2, pbrMat(ART.tex.door, 0.72, 0.12));
@@ -231,13 +300,20 @@ const Main = (() => {
       waterMesh = mkWater(wcells, (LEVELS[G.level] || {}).theme);
       if (waterMesh) worldGroup.add(waterMesh);
     }
-    // wall decorations on wall faces that border floor
+    // wall decorations on wall faces that border floor. The mapping rule is to
+    // keep portraits clear of pushwalls: a sign on a panel that slides reads as
+    // a glitch, not a clue.
     const decorKeys = ['poster', 'skull', 'pipes'];
     const decorCount = Game.tune().decorCount || 14;
     let placed = 0, tries = 0;
     while (placed < decorCount && tries++ < 500) {
       const x = 1 + (Math.random() * (MAPW - 2)) | 0, y = 1 + (Math.random() * (MAPH - 2)) | 0;
       if (MAP[y][x] !== '#' && MAP[y][x] !== 'T' && MAP[y][x] !== '~') continue;
+      let nearPanel = false;
+      for (let sx = -1; sx <= 1 && !nearPanel; sx++)
+        for (let sy = -1; sy <= 1 && !nearPanel; sy++)
+          if (MAP[y + sy] && MAP[y + sy][x + sx] === 'W') nearPanel = true;
+      if (nearPanel) continue;
       const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]].filter(([dx, dy]) => {
         const nx = x + dx, ny = y + dy;
         return MAP[ny] && MAP[ny][nx] !== '#' && MAP[ny][nx] !== 'T' && MAP[ny][nx] !== '~' && MAP[ny][nx] !== 'D';
@@ -607,9 +683,19 @@ const Main = (() => {
       flashMesh.visible = false;
       muzzleLight.intensity = 0;
     }
-    // doors slide up (doorMeshes hold a direct ref to their logic object)
-    for (const d of doorMeshes)
-      d.mesh.position.y = d.baseY + (d.door ? d.door.open : 0) * WALL_H * Game.tune().doorSlideFrac;
+    // doors slide up; secret panels slide sideways. The sim moves the door
+    // object when a panel gives way, so the mesh has to chase it to its new cell
+    for (const d of doorMeshes) {
+      const door = d.door;
+      if (!door) continue;
+      if (door.push) {
+        const k = Math.min(1, dt * 8);          // a hard shove, not a slow glide
+        d.mesh.position.x += (door.cx + 0.5 - d.mesh.position.x) * k;
+        d.mesh.position.z += (door.cy + 0.5 - d.mesh.position.z) * k;
+      } else {
+        d.mesh.position.y = d.baseY + door.open * WALL_H * Game.tune().doorSlideFrac;
+      }
+    }
     // torches flicker, and each shaft's cone carries the same flicker value
     for (let i = 0; i < torches.length; i++) {
       const l = torches[i];
@@ -1125,6 +1211,10 @@ const Main = (() => {
       else if (ch === 'w') { g.fillStyle = '#2b4c57'; g.fillRect(x * s, y * s, s, s); }
       else if (ch === '#' || ch === 'T' || ch === 'W') { g.fillStyle = '#666'; g.fillRect(x * s, y * s, s, s); }
       else if (ch === 'D') { g.fillStyle = '#a80'; g.fillRect(x * s, y * s, s, s); }
+      // vault floor and elevator hatch only ever appear on the map after the
+      // panel has moved - the rock hides them until then
+      else if (ch === 'A') { g.fillStyle = '#c9a24a'; g.fillRect(x * s, y * s, s, s); }
+      else if (ch === 'E') { g.fillStyle = '#e8d493'; g.fillRect(x * s, y * s, s, s); }
     }
     for (const it of G.items) if (!it.taken) { g.fillStyle = '#4af'; g.fillRect(it.x * s - 1, it.y * s - 1, 3, 3); }
     for (const e of G.enemies) if (!e.dead) { g.fillStyle = '#f33'; g.fillRect(e.x * s - 1.5, e.y * s - 1.5, 3, 3); }

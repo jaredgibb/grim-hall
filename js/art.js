@@ -65,11 +65,22 @@
   // lambert wash the retro look used.
   const TS = 128;
   const THEMES = {
-    hall:  { brick: [74, 38, 32], mortar: [34, 22, 18], metal: [61, 71, 84], accent: '#8a5a3a', water: [30, 46, 52] },
-    crypt: { brick: [52, 54, 60], mortar: [22, 24, 28], metal: [48, 52, 60], accent: '#4a5568', water: [24, 34, 40] },
+    hall:  { brick: [74, 38, 32], mortar: [34, 22, 18], metal: [61, 71, 84],
+             accent: '#8a5a3a', glow: '#e08a4a', halo: 'rgba(224,138,74,0.52)',
+             drip: 'rgba(224,160,110,0.16)', wood: [88, 66, 44], water: [30, 46, 52], lining: true },
+    crypt: { brick: [46, 44, 40], mortar: [16, 15, 13], metal: [110, 104, 96],
+             accent: '#b9a98c', glow: '#d8c7a5', halo: 'rgba(216,199,165,0.45)',
+             drip: 'rgba(190,175,150,0.18)', wood: [72, 62, 52], water: [36, 38, 42], lining: true },
     forge: { brick: [66, 44, 30], mortar: [26, 20, 16], metal: [78, 60, 42], accent: '#b06a2a',
-             glow: '#c9531f', wood: [84, 62, 38], water: [42, 36, 30] },
-    vault: { brick: [44, 52, 62], mortar: [18, 22, 26], metal: [40, 46, 54], accent: '#2f6b7a', water: [22, 40, 50] },
+             glow: '#c9531f', halo: 'rgba(201,83,31,0.45)', drip: 'rgba(200,120,60,0.15)',
+             wood: [84, 62, 38], water: [42, 36, 30] },
+    vault: { brick: [40, 46, 58], mortar: [15, 18, 22], metal: [62, 72, 84], accent: '#3d7a8c',
+             glow: '#6fb0c4', halo: 'rgba(111,176,196,0.4)', drip: 'rgba(140,170,185,0.16)',
+             wood: [56, 60, 64], water: [22, 40, 50], lining: true },
+    // gilded: the secret floor - warm gold masonry, brass-plated everything
+    gilded:  { brick: [96, 78, 42], mortar: [34, 26, 16], metal: [164, 138, 72],
+               accent: '#e8c05a', glow: '#ffd27a', halo: 'rgba(245,205,120,0.52)',
+               drip: 'rgba(240,210,140,0.14)', wood: [104, 84, 50], water: [48, 44, 36], lining: true },
     // cistern: damp salt-green stone; bone: pale ash-lime masonry
     cistern: { brick: [46, 62, 66], mortar: [20, 28, 30], metal: [56, 72, 78], accent: '#3f7a86',
                drip: 'rgba(214,226,218,0.20)', wood: [58, 62, 52], water: [24, 58, 64] },
@@ -82,7 +93,7 @@
                drip: 'rgba(190,180,170,0.14)', water: [34, 38, 40] },
     // magma: basalt streaked with molten iron; spire: cold green-black slate
     magma:   { brick: [56, 36, 32], mortar: [20, 14, 12], metal: [92, 62, 44], accent: '#e2713a',
-               drip: 'rgba(240,120,50,0.22)', glow: '#ff8a3a', water: [56, 34, 28] },
+               drip: 'rgba(240,120,50,0.22)', glow: '#ff8a3a', wood: [70, 48, 34], water: [56, 34, 28] },
     spire:   { brick: [44, 52, 48], mortar: [18, 22, 22], metal: [60, 70, 66], accent: '#3f8a72',
                drip: 'rgba(150,200,180,0.16)', water: [24, 44, 40] },
     // glass: pale quartz with luminous crystal veins; onyx: black polished stone
@@ -1239,6 +1250,8 @@
       plank: pbr(planks(theme), 'plank#' + seed, false),
       door: pbr(door(theme), 'door#' + seed, false),
       floor: pbr(floor(theme), 'floor#' + seed, true), ceil: pbr(ceil(theme), 'ceil#' + seed, true),
+      vaultWall: pbr(vaultMetal(theme), 'vaultwall#' + seed, false),
+      vaultFloor: pbr(goldFloor(theme), 'vaultfloor#' + seed, true),
       exit: tex(exitSign(), false, d('exit')),
       ceilLight: tex(ceilLight(), false, d('ceilLight')),
       poster: tex(poster(), false, d('poster')), skull: tex(skull(), false, d('skull')), pipes: tex(pipes(), false, d('pipes')),
@@ -1268,6 +1281,11 @@
         bloom: FLASHR[k],           // flash radius in viewmodel pixels
       })),
       flame: flameFrames().map((c, i) => tex(c, false, 'fl' + i)),
+      treasure: {
+        coin: tex(coinSprite(), false, 'coin'), gem: tex(gemSprite(), false, 'gem'),
+        chalice: tex(chaliceSprite(), false, 'chalice'), crown: tex(crownSprite(), false, 'crown'),
+        chest: tex(chestSprite(), false, 'chest'),
+      },
       ember: emberFrames().map((c, i) => tex(c, false, 'em' + i)),
       flash: tex(muzzleFlash(), false, 'flash'),
       face: faceFrames().map((c, i) => tex(c, false, 'face' + i)),
@@ -1290,6 +1308,123 @@
     const hex = (THEMES[theme] || THEMES.hall).accent.slice(1);
     const ch = i => parseInt(hex.substr(i, 2), 16) / 255;
     return [1 + (ch(0) - 0.5) * 0.24, 1 + (ch(2) - 0.5) * 0.24, 1 + (ch(4) - 0.5) * 0.24];
+  }
+
+  // ---- vault treasure: real objects, not colour chips ----
+  // Loot used to be a flat 4px square, which read as confetti. These are painted
+  // with the same gradient/outline kit the guns and enemies use, so a chest looks
+  // like a chest and a crown looks like a crown when the wall slides open.
+  const GOLD = '#c9b458', GOLD_L = '#e8d493', GOLD_D = '#8f7c34', GOLD_E = '#5c4c1e';
+  function sheen(g, cx, cy, r, c0, c1) {
+    const grd = g.createRadialGradient(cx - r * 0.4, cy - r * 0.5, r * 0.15, cx, cy, r);
+    grd.addColorStop(0, c0); grd.addColorStop(1, c1);
+    g.fillStyle = grd; g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fill();
+  }
+  function coinSprite() {
+    const c = mkc(TS, TS), g = c.getContext('2d');
+    sheen(g, 16, 16, 10, GOLD_L, GOLD_D);
+    g.strokeStyle = GOLD_E; g.lineWidth = 2;
+    g.beginPath(); g.arc(16, 16, 9.5, 0, Math.PI * 2); g.stroke();
+    g.fillStyle = GOLD_E; g.font = 'bold 12px Georgia'; g.fillText('$', 12, 21);
+    return c;
+  }
+  function gemSprite() {
+    const c = mkc(TS, TS), g = c.getContext('2d');
+    const facets = [[16, 4, 26, 14], [16, 4, 6, 14], [6, 14, 16, 27], [26, 14, 16, 27], [6, 14, 26, 14]];
+    for (let i = 0; i < facets.length; i++) {
+      const f = facets[i];
+      g.fillStyle = i < 2 ? '#7fb6d6' : i < 4 ? '#2f5f7a' : '#4a86a8';
+      g.beginPath(); g.moveTo(f[0], f[1]); g.lineTo(f[2], f[3]); g.lineTo(f[4], f[5]); g.closePath(); g.fill();
+    }
+    g.strokeStyle = '#0d1a24'; g.lineWidth = 1.5;
+    g.beginPath(); g.moveTo(16, 4); g.lineTo(26, 14); g.lineTo(16, 27); g.lineTo(6, 14); g.closePath(); g.stroke();
+    g.fillStyle = '#e8f4ff'; g.fillRect(14, 6, 3, 3);
+    return c;
+  }
+  function chaliceSprite() {
+    const c = mkc(TS, TS), g = c.getContext('2d');
+    g.fillStyle = GOLD_D; g.fillRect(11, 22, 10, 4);           // foot
+    g.fillStyle = GOLD; g.fillRect(14, 14, 4, 9);              // stem
+    const grd = g.createLinearGradient(6, 6, 26, 18);
+    grd.addColorStop(0, GOLD_L); grd.addColorStop(1, GOLD_D);
+    g.fillStyle = grd;
+    g.beginPath(); g.moveTo(6, 6); g.lineTo(26, 6); g.lineTo(20, 16); g.lineTo(12, 16); g.closePath(); g.fill();
+    g.strokeStyle = GOLD_E; g.lineWidth = 1.5;
+    g.beginPath(); g.moveTo(6, 6); g.lineTo(26, 6); g.lineTo(20, 16); g.lineTo(12, 16); g.closePath(); g.stroke();
+    g.fillStyle = '#fff6d8'; g.fillRect(7, 5, 19, 2);          // rim highlight
+    g.fillStyle = '#7a5a1a'; g.beginPath(); g.arc(16, 11, 2.5, 0, Math.PI * 2); g.fill();
+    return c;
+  }
+  function crownSprite() {
+    const c = mkc(TS, TS), g = c.getContext('2d');
+    const grd = g.createLinearGradient(0, 8, 0, 24);
+    grd.addColorStop(0, GOLD_L); grd.addColorStop(1, GOLD_D);
+    g.fillStyle = grd;
+    g.beginPath();
+    g.moveTo(4, 24); g.lineTo(4, 12); g.lineTo(9, 18); g.lineTo(13, 8); g.lineTo(16, 14);
+    g.lineTo(19, 8); g.lineTo(23, 18); g.lineTo(28, 12); g.lineTo(28, 24); g.closePath(); g.fill();
+    g.strokeStyle = GOLD_E; g.lineWidth = 1.5; g.stroke();
+    g.fillStyle = GOLD_E; g.fillRect(4, 22, 24, 2);
+    for (const [x, y] of [[13, 12], [19, 12], [9, 16], [23, 16]]) {
+      g.fillStyle = '#d64b4b'; g.beginPath(); g.arc(x, y, 2, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#ffd9d9'; g.fillRect(x - 1, y - 2, 1, 1);
+    }
+    return c;
+  }
+  function chestSprite() {
+    const c = mkc(TS, TS), g = c.getContext('2d');
+    g.fillStyle = '#3c2713'; g.fillRect(4, 12, 24, 14);        // body
+    g.fillStyle = '#6b4423'; g.fillRect(4, 10, 24, 6);         // lid
+    g.strokeStyle = '#241609'; g.lineWidth = 1.5;
+    g.strokeRect(4, 10, 24, 16);
+    g.fillStyle = GOLD; g.fillRect(4, 15, 24, 3);              // band
+    g.fillStyle = GOLD_L; g.fillRect(13, 8, 6, 8);            // lock plate
+    g.fillStyle = GOLD_E; g.beginPath(); g.arc(16, 14, 2, 0, Math.PI * 2); g.fill();
+    for (let x = 8; x < 28; x += 6) { g.fillStyle = '#241609'; g.fillRect(x, 10, 1, 16); }
+    return c;
+  }
+
+  // vault lining: brass-plated panels with rivets, so a treasure chamber reads as
+  // a manufactured room rather than more of the same dungeon brick
+  function vaultMetal(theme) {
+    const s = mkc(TS, TS), g = s.getContext('2d');
+    g.fillStyle = 'rgb(' + theme.metal.join(',') + ')'; g.fillRect(0, 0, TS, TS);
+    for (let i = 0; i < 4; i++) {
+      const y0 = i * 32;
+      g.fillStyle = 'rgb(' + (theme.metal[0] + 12) + ',' + (theme.metal[1] + 14) + ',' + (theme.metal[2] + 18) + ')';
+      g.fillRect(0, y0 + 3, TS, 26);
+      g.fillStyle = '#1a1d22'; g.fillRect(0, y0 + 29, TS, 3);
+      for (let x = 8; x < TS; x += 24) {
+        g.fillStyle = '#dfe6ee'; g.beginPath(); g.arc(x, y0 + 8, 2, 0, Math.PI * 2); g.fill();
+        g.fillStyle = '#0d1014'; g.beginPath(); g.arc(x, y0 + 9, 1.2, 0, Math.PI * 2); g.fill();
+      }
+    }
+    // gold sheen along the seam: the lining is plated, not bare steel
+    g.fillStyle = 'rgba(201, 180, 88, 0.22)'; g.fillRect(0, 0, TS, TS);
+    noise(g, TS, TS, 110, 0.06, 0.16, 2);
+    return s;
+  }
+  // vault floor: dark slabs inlaid with gold veins and scattered coin
+  function goldFloor(theme) {
+    const s = mkc(TS, TS), g = s.getContext('2d');
+    g.fillStyle = 'rgb(' + (theme.brick[0] - 12) + ',' + (theme.brick[1] - 14) + ',' + (theme.brick[2] - 16) + ')';
+    g.fillRect(0, 0, TS, TS);
+    for (let y = 0; y < TS; y += 32) { g.fillStyle = '#0b0d10'; g.fillRect(0, y, TS, 2); }
+    for (let x = 0; x < TS; x += 32) { g.fillStyle = '#0b0d10'; g.fillRect(x, 0, 2, TS); }
+    g.strokeStyle = GOLD; g.lineWidth = 2;
+    for (let i = 0; i < 4; i++) {
+      g.beginPath();
+      let x = (i * 11) % TS, y = (i * 7) % TS;
+      g.moveTo(x, y);
+      for (let k = 0; k < 4; k++) { x = (x + 9) % TS; y = (y + 13) % TS; g.lineTo(x, y); }
+      g.stroke();
+    }
+    for (let i = 0; i < 10; i++) {
+      const x = (rnd() * TS) | 0, y = (rnd() * TS) | 0;
+      g.fillStyle = GOLD_L; g.beginPath(); g.arc(x, y, 1.6, 0, Math.PI * 2); g.fill();
+    }
+    noise(g, TS, TS, 120, 0.05, 0.12, 2);
+    return s;
   }
 
   const Art = {

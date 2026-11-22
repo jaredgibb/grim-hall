@@ -16,11 +16,40 @@ function sim(ticks, input = {}) {
     Game.update(DT);
   }
 }
+
 function fresh(level = 0, seed = 1234) {
   G.seed = seed;
   Game.buildWorld(level);
   G.state = 'play';
   return G;
+}
+
+// secrets.js grows and carves every authored map before the sim sees it, so the
+// tests below find their own landmarks rather than trusting fixed coordinates.
+function openBlock(w = 4, h = 3) {          // a clear rectangle of walkable floor
+  const MAP = Game.grid(), W = Game.width(), H = Game.height();
+  const open = (x, y) => x >= 1 && y >= 1 && x < W - 1 && y < H - 1 && !'#TW~'.includes(MAP[y][x]);
+  for (let y = 1; y + h <= H - 1; y++)
+    for (let x = 1; x + w <= W - 1; x++) {
+      let ok = true;
+      for (let yy = y; yy < y + h && ok; yy++)
+        for (let xx = x; xx < x + w; xx++) if (!open(xx, yy)) { ok = false; break; }
+      if (ok) return { x: x + w / 2, y: y + h / 2, cx: x, cy: y, w, h };
+    }
+  return null;
+}
+function wallFace() {                        // floor cell with masonry directly west
+  const MAP = Game.grid(), W = Game.width(), H = Game.height();
+  for (let y = 1; y < H - 1; y++)
+    for (let x = 2; x < W - 1; x++)
+      if (MAP[y][x] === '.' && '#T~'.includes(MAP[y][x - 1])) return [x, y];
+  return null;
+}
+function shore() {                            // [dryX, dryY, wetX, wetY] in a row
+  const MAP = Game.grid();
+  for (const [wx, wy] of Game.waterCells())
+    if (MAP[wy][wx - 1] === '.' && MAP[wy][wx + 1] === 'w') return [wx - 1, wy, wx, wy];
+  return null;
 }
 
 test('every level matches its own legend', () => {
@@ -34,8 +63,9 @@ test('every level matches its own legend', () => {
     fresh(i, 1);
     const enemyTotal = Object.keys(GH.enemy).reduce((a, c) => a + (counts[c] || 0), 0);
     assert.strictEqual(G.total, enemyTotal, `${lvl.name}: enemy count`);
-    assert.strictEqual(G.items.length, ['1', '2', 'a', 'b', 'h', 'k', 'H'].reduce((a, c) => a + (counts[c] || 0), 0), `${lvl.name}: item count`);
+    assert.strictEqual(G.items.length, ['1', '2', 'a', 'b', 'h', 'k', 'H', 'c', 'v', 'x', 'C'].reduce((a, c) => a + (counts[c] || 0), 0), `${lvl.name}: item count`);
     assert.strictEqual(G.secrets.total, counts['W'] || 0, `${lvl.name}: secret count`);
+    assert.ok((counts['W'] || 0) >= 2, `${lvl.name}: every Wolfenstein floor hides at least two secrets`);
   }
 });
 
@@ -151,16 +181,90 @@ test('enemy projectiles explode and hurt the player', () => {
   assert.ok(G.player.hp < hp, 'the blast should damage the player');
 });
 
-test('the secret pushwall opens once and is counted once', () => {
+test('the secret pushwall slides two squares and is counted once', () => {
   fresh(0, 14);
-  const secret = G.doors.find(d => d.push);
-  G.player.x = secret.cx - 0.4; G.player.y = secret.cy;
-  sim(60);
-  assert.ok(secret.open > 0.5, 'the pushwall should slide open');
+  const secret = G.doors.find(d => d.push && (d.dx || d.dy));
+  assert.ok(secret, 'the level has a panel that can actually slide');
+  const dx = secret.dx, dy = secret.dy, cx0 = secret.cx, cy0 = secret.cy;
+  // stand on the approach side and walk into it: a pushwall only gives way when
+  // the player shoves it, not merely by being nearby
+  G.player.x = cx0 - dx + 0.5; G.player.y = cy0 - dy + 0.5;
+  G.player.a = Math.atan2(dy, dx);
+  sim(30, { fwd: 1 });
+  assert.strictEqual(secret.cx, cx0 + dx * 2, 'the panel slid exactly two squares');
+  assert.strictEqual(secret.cy, cy0 + dy * 2);
+  assert.ok(Game.cell(cx0, cy0) !== 'W', 'the cell the panel left is now an opening');
+  assert.ok(Game.hasLOS(cx0 - dx + 0.5, cy0 - dy + 0.5, cx0 + 0.5, cy0 + 0.5), 'the vault can be seen through the gap');
   assert.strictEqual(G.secrets.found, 1);
-  sim(60);
+  sim(60, { fwd: 1 });
   assert.strictEqual(G.secrets.found, 1, 'the secret must not be double-counted');
+  assert.strictEqual(secret.cx, cx0 + dx * 2, 'a panel stopped by the far wall stays put');
 });
+
+test('a panel jams when something blocks its travel path', () => {
+  fresh(0, 14);
+  const secret = G.doors.find(d => d.push && (d.dx || d.dy));
+  const guard = { t: 'g', def: GH.enemy.g, x: secret.cx + secret.dx + 0.5, y: secret.cy + secret.dy + 0.5,
+    hp: 22, dead: false, r: 0.35 };
+  G.enemies.push(guard);
+  assert.ok(!Game.tryPushwall(secret, secret.dx, secret.dy), 'a guard in the path jams the wall');
+  assert.strictEqual(secret.cx, secret.cx, 'the jammed panel did not move');
+  G.enemies.pop();
+  assert.ok(Game.tryPushwall(secret, secret.dx, secret.dy), 'with the path clear the same shove works');
+});
+test('a deep chamber can be shoved twice, and the panel can be shoved back', () => {
+  const idx = GH.levels.findIndex(l => (l.vaults || []).some(v => v.d >= 5));
+  assert.ok(idx >= 0, 'some floor hides a five-square bullion hall');
+  fresh(idx, 71);
+  const vault = GH.levels[idx].vaults.find(v => v.d >= 5);
+  const panel = G.doors.find(d => d.push && d.cx === vault.ex && d.cy === vault.ey);
+  const [dx, dy] = [vault.dx, vault.dy];
+  G.player.x = vault.ex - dx + 0.5; G.player.y = vault.ey - dy + 0.5; G.player.a = Math.atan2(dy, dx);
+  sim(40, { fwd: 1 });
+  assert.strictEqual(panel.cx, vault.ex + dx * 2, 'first shove: two squares in');
+  sim(60, { fwd: 1 });
+  assert.strictEqual(panel.cx, vault.ex + dx * 4, 'the chain pushwall: the same panel gives way again');
+  // Wolfenstein panels are not one-way: shove it the other way and it comes back
+  G.player.x = panel.cx + dx + 0.5; G.player.y = panel.cy + dy + 0.5;
+  G.player.a = Math.atan2(-dy, -dx);
+  assert.ok(Game.tryPushwall(panel, -dx, -dy), 'the panel slides back the other way');
+  assert.strictEqual(panel.cx, vault.ex + dx * 2);
+});
+
+test('a vault is sealed off until its panel moves', () => {
+  for (let i = 0; i < GH.levels.length; i++) {
+    fresh(i, 9);
+    const lvl = GH.levels[i], W = Game.width(), H = Game.height(), MAP = Game.grid();
+    const seen = Array.from({ length: H }, () => new Array(W).fill(false));
+    const q = [[Math.floor(G.player.x), Math.floor(G.player.y)]];
+    seen[q[0][1]][q[0][0]] = true;
+    while (q.length) {
+      const [x, y] = q.shift();
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H || seen[ny][nx]) continue;
+        if ('#T~W'.includes(MAP[ny][nx])) continue;   // the panel keeps the secret shut
+        seen[ny][nx] = true; q.push([nx, ny]);
+      }
+    }
+    for (const v of (lvl.vaults || []))
+      for (const [x, y] of v.cells)
+        assert.ok(!seen[y][x], `${lvl.name}: vault ${v.id} cell ${x},${y} leaks into the level`);
+  }
+});
+
+test('chests and crowns only ever sit behind a pushwall', () => {
+  for (const lvl of GH.levels) {
+    const inVault = new Set();
+    for (const v of (lvl.vaults || [])) for (const [x, y] of v.cells) inVault.add(y * lvl.map[0].length + x);
+    const MAP = lvl.map;
+    for (let y = 0; y < MAP.length; y++)
+      for (let x = 0; x < MAP[y].length; x++)
+        if (MAP[y][x] === 'x' || MAP[y][x] === 'C')
+          assert.ok(inVault.has(y * MAP[y].length + x), `${lvl.name}: a chest/crown sits out in the open at ${x},${y}`);
+  }
+});
+
 
 test('the flow field never routes enemies through a pushwall', () => {
   fresh(0, 15);

@@ -7,10 +7,16 @@
   // require it directly. (typeof guard avoids a self-referential TDZ error.)
   const NS = (typeof GH !== 'undefined') ? GH :
              (typeof module !== 'undefined' ? require('./data.js') : globalThis.GH);
+  // In the browser secrets.js runs before this file and has already carved the
+  // vaults into every level. A headless run loads data.js and game.js directly,
+  // so make sure the chambers exist here too - otherwise the sim sees the raw
+  // authored map and every pushwall is a wall with nothing behind it.
+  if (typeof module !== 'undefined' && !NS.vaults) require('./secrets.js');
 
   const TAU = NS.tau;
   const WEAPONS = NS.weapons;
   const ENEMY = NS.enemy;
+  const TREASURE = NS.treasure || {};
 
   // ---- deterministic RNG: same seed -> same run (tests, replays) ----
   function makeRng(seed) {
@@ -36,6 +42,8 @@
               fireCd: 0, bob: 0, moving: false, stepT: 0, kick: 0, switchT: 0 },
     enemies: [], items: [], projs: [], fx: [], doors: [], exit: { x: 0, y: 0, active: false },
     secrets: { found: 0, total: 0 },
+    treasure: { got: 0, total: 0 },
+    gotoLevel: null,                 // set by a secret elevator; the renderer swaps the world
     pendingOverlay: null, overlayTimer: 0,   // death/win panels are timed by the sim
   };
 
@@ -44,6 +52,7 @@
   let solid = new Uint8Array(0);     // 1 = blocks movement & sight, updated as doors slide
   let water = new Uint8Array(0);     // 1 = shallow water, wading through it is slow
   let doorAt = [];                   // flat: door object or null
+  let vaultCell = new Uint8Array(0); // 1 = the cell is the interior of a secret vault
   let FLOW = null;                   // flat: FLOW[i] = next cell toward the player
   let flowT = 0;
 
@@ -156,6 +165,62 @@
     return FLOW;
   }
 
+  // ---- pushwalls: a Wolfenstein secret wall slides two squares when walked into ----
+  const PUSH_SQUARES = 2;
+  const setCell = (x, y, ch) => { grid[y] = grid[y].slice(0, x) + ch + grid[y].slice(x + 1); };
+  // A sliding panel may only pass through empty masonry-free cells: guards,
+  // props and doorways all jam it, exactly as the mapedit tips warn.
+  function freeForWall(cx, cy) {
+    if (cx < 0 || cy < 0 || cx >= W || cy >= H) return false;
+    const i = idx(cx, cy);
+    if (solid[i] || doorAt[i]) return false;
+    for (const e of G.enemies)
+      if (!e.dead && Math.floor(e.x) === cx && Math.floor(e.y) === cy) return false;
+    for (const it of G.items)
+      if (!it.taken && Math.floor(it.x) === cx && Math.floor(it.y) === cy) return false;
+    return true;
+  }
+  // A pushwall with no chamber behind it still needs a direction it could travel
+  // in: two clear squares ahead, masonry on either side of the run it sits in.
+  function slideDir(cx, cy) {
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      if (cellSolid(cx + dx, cy + dy) || cellSolid(cx + dx * 2, cy + dy * 2)) continue;
+      if (!isWallCh(cell(cx + dy, cy + dx)) || !isWallCh(cell(cx - dy, cy - dx))) continue;
+      return [dx, dy];
+    }
+    return null;
+  }
+  // Wolfenstein's pushwall: it only gives way when *both* squares behind it are
+  // clear. Anything in the path - a guard, a corpse, a prop, a doorway - jams it,
+  // and the design bible is blunt about it: never put anything the player needs
+  // in a panel's travel path, because a jammed wall reads as a broken map.
+  function tryPushwall(d, ax, ay) {
+    if (!d.push) return false;
+    const cx = d.cx, cy = d.cy;
+    if (!freeForWall(cx + ax, cy + ay) || !freeForWall(cx + ax * PUSH_SQUARES, cy + ay * PUSH_SQUARES)) {
+      // a wall that will not move still thuds - once per shove, not every tick
+      if (d.jamCd <= 0) { AUDIO.jam(); d.jamCd = 0.4; }
+      return false;
+    }
+    setCell(cx, cy, vaultCell[idx(cx, cy)] ? 'A' : '.');
+    solid[idx(cx, cy)] = 0; doorAt[idx(cx, cy)] = null;
+    const nx = cx + ax * PUSH_SQUARES, ny = cy + ay * PUSH_SQUARES;
+    setCell(nx, ny, 'W');
+    solid[idx(nx, ny)] = 1; doorAt[idx(nx, ny)] = d;
+    d.cx = nx; d.cy = ny; d.open = 0;
+    AUDIO.pushwall();
+    G.shake = Math.min(8, G.shake + 3.5);
+    if (!d.found) {
+      d.found = true; G.secrets.found++;
+      AUDIO.unlock();
+      G.fx.push({ kind: 'msg', text: 'SECRET FOUND!', t: 2.2, max: 2.2 });
+      // the guard behind a pushwall is deaf until the wall actually moves
+      for (const e of G.enemies) if (!e.dead && e.vault === d.vault) e.deaf = false;
+    }
+    computeFlow();
+    return true;
+  }
+
   function buildWorld(levelIdx = 0) {
     const level = NS.levels[levelIdx] || NS.levels[0];
     G.level = levelIdx;
@@ -165,6 +230,15 @@
     solid = new Uint8Array(W * H);
     water = new Uint8Array(W * H);
     doorAt = new Array(W * H).fill(null);
+    vaultCell = new Uint8Array(W * H);
+    const VAULTS = level.vaults || [];
+    for (const v of VAULTS) for (const [x, y] of v.cells)
+      if (x >= 0 && y >= 0 && x < W && y < H) vaultCell[idx(x, y)] = 1;
+    const vaultAt = (x, y) => {
+      for (const v of VAULTS)
+        if (v.cells.some(([vx, vy]) => vx === x && vy === y)) return v.id;
+      return -1;
+    };
     rng = makeRng(G.seed || Date.now());
     G.enemies = []; G.items = []; G.doors = []; G.projs = []; G.fx = [];
     let px = 1.5, py = 1.5;
@@ -175,17 +249,25 @@
         water[i] = c === 'w' ? 1 : 0;
         if (c === 'P') { px = x + 0.5; py = y + 0.5; }
         else if (c === 'D' || c === 'W') {
-          const dr = { cx: x, cy: y, open: 0, push: c === 'W', found: false };
+          const dr = { cx: x, cy: y, open: 0, push: c === 'W', found: false, dx: 0, dy: 0, vault: -1, jamCd: 0, hint: false };
+          if (dr.push) {
+            const v = VAULTS.find(v => v.ex === x && v.ey === y);
+            if (v) { dr.dx = v.dx; dr.dy = v.dy; dr.vault = v.id; dr.hint = !!v.hint; }
+            else { const dir = slideDir(x, y); if (dir) { dr.dx = dir[0]; dr.dy = dir[1]; } }
+          }
           G.doors.push(dr); doorAt[i] = dr; solid[i] = 1;      // shut until it slides open
         } else if (c === 'X') G.exit = { x: x + 0.5, y: y + 0.5, active: false };
         else if (ENEMY[c]) {
-          const d = ENEMY[c];
+          const d = ENEMY[c], vid = vaultAt(x, y);
           G.enemies.push({ t: c, def: d, x: x + 0.5, y: y + 0.5, hp: d.hp, a: rng() * TAU,
             cd: 1 + rng(), flash: 0, mz: 0, dead: false, deadT: 0, wa: rng() * TAU, wt: 0, anim: rng() * 9,
-            mode: 'wander', lx: 0, ly: 0, flinch: 0, strafe: 1, stT: 0, tele: 0, charging: 0, moving: false });
+            mode: 'wander', lx: 0, ly: 0, flinch: 0, strafe: 1, stT: 0, tele: 0, charging: 0, moving: false,
+            deaf: vid >= 0, vault: vid });
         } else if ('12abhkH'.includes(c)) {
           const key = { '1': 'i1', '2': 'i2', 'a': 'ia', 'b': 'ib', 'h': 'ih', 'H': 'iH', 'k': 'ik' }[c];
           G.items.push({ key, x: x + 0.5, y: y + 0.5, taken: false, bob: rng() * 9 });
+        } else if (TREASURE[c]) {
+          G.items.push({ key: c, val: TREASURE[c], x: x + 0.5, y: y + 0.5, taken: false, bob: rng() * 9 });
         }
       }
     }
@@ -197,7 +279,9 @@
     G.time = 0; G.kills = 0; G.score = 0; G.shake = 0; G.dmgFlash = 0; G.noise = 0;
     G.total = G.enemies.length;
     G.stats = { shots: 0, hits: 0 }; G.hitDirT = 0; G.hitT = 0;
-    G.secrets = { found: 0, total: G.doors.filter(d => d.push).length };
+    // a pushwall with nowhere to slide is a mapping bug, not a secret
+    G.secrets = { found: 0, total: G.doors.filter(d => d.push && (d.dx || d.dy)).length };
+    G.treasure = { got: 0, total: G.items.reduce((a, it) => a + (it.val || 0), 0) };
     G.pendingOverlay = null; G.overlayTimer = 0;
     computeFlow();
   }
@@ -214,7 +298,7 @@
     const cells = [];
     for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
       const c = grid[y][x];
-      if (c !== '.' && c !== 'X') continue;
+      if (c !== '.' && c !== 'X' && c !== 'A') continue;
       let walls = 0;
       for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
         const ch = grid[y + dy][x + dx];
@@ -281,9 +365,10 @@
     if (w.ammo) p.ammo[w.ammo]--;
     p.fireCd = w.rate; p.kick = w.kick; G.noise = 1;
     G.stats.shots++;
-    // a gunshot alerts every enemy in earshot
+    // a gunshot alerts every enemy in earshot - but not a guard still sealed
+    // behind a pushwall, which is the whole point of hiding one
     for (const e of G.enemies) {
-      if (!e.dead && Math.hypot(e.x - p.x, e.y - p.y) < TUNE.gunAlarmRadius) {
+      if (!e.dead && !e.deaf && Math.hypot(e.x - p.x, e.y - p.y) < TUNE.gunAlarmRadius) {
         e.mode = 'chase'; e.lx = p.x; e.ly = p.y;
       }
     }
@@ -359,6 +444,14 @@
       mx /= len; my /= len;
       const spd = TUNE.playerSpeed * mag * (inp.sprint ? 1.55 : 1);
       moveEnt(p, mx * spd * dt, my * spd * dt, TUNE.playerR);
+      // Wolfenstein pushwall: a secret wall gives way when you walk into it,
+      // sliding two squares in the direction of the step.
+      const pcx = Math.floor(p.x), pcy = Math.floor(p.y);
+      const wx = Math.floor(p.x + mx * 0.6), wy = Math.floor(p.y + my * 0.6);
+      if ((wx !== pcx) !== (wy !== pcy)) {
+        const d = doorAt[idx(wx, wy)];
+        if (d && d.push) tryPushwall(d, Math.sign(wx - pcx), Math.sign(wy - pcy));
+      }
       p.bob += dt * 9 * mag;
       p.stepT -= dt * mag;              // footsteps keep pace with the walk, not the clock
       if (p.stepT <= 0) { p.stepT = 0.38; (inWater(p.x, p.y) ? AUDIO.wade() : AUDIO.step()); }
@@ -379,11 +472,31 @@
       else if (it.key === 'ik') { if (p.armor >= TUNE.armorMax) ok = false; else p.armor = Math.min(TUNE.armorMax, p.armor + 50); }
       else if (it.key === 'ih') { if (p.hp >= TUNE.maxHp) ok = false; else p.hp = Math.min(TUNE.maxHp, p.hp + 30); }
       else if (it.key === 'iH') { if (p.hp >= TUNE.maxHp) ok = false; else p.hp = Math.min(TUNE.maxHp, p.hp + 60); }
+      else if (TREASURE[it.key]) {
+        G.score += it.val; G.treasure.got += it.val;
+        G.fx.push({ kind: 'msg', text: TREASURE[it.key] + ' POINTS', t: 1.2, max: 1.2 });
+      }
       if (ok) { it.taken = true; AUDIO.pickup(); }
+    }
+    // Wolfenstein secret elevator: standing on the hatch rides you down to the
+    // hidden floor. The sim only flags the destination; main.js rebuilds the
+    // world on the next frame so the sound and the message still play.
+    if (cell(Math.floor(p.x), Math.floor(p.y)) === 'E') {
+      const target = (NS.levels[G.level] || {}).secretLevel;
+      if (target != null && NS.levels[target] && G.gotoLevel == null) {
+        G.gotoLevel = target;
+        AUDIO.elevator();
+        G.fx.push({ kind: 'msg', text: 'SECRET ELEVATOR', t: 2.4, max: 2.4 });
+        G.shake = Math.min(8, G.shake + 4);
+      }
     }
     if (G.exit.active && Math.hypot(G.exit.x - p.x, G.exit.y - p.y) < TUNE.exitTouchDist) {
       G.state = 'win';
       G.score += Math.max(0, TUNE.winBonusTime - Math.floor(G.time) * TUNE.winBonusPerSec) + p.hp * TUNE.winBonusHp;
+      // Wolfenstein pays 10000 for every category finished at 100%
+      if (G.total && G.kills >= G.total) G.score += 10000;
+      if (G.secrets.total && G.secrets.found >= G.secrets.total) G.score += 10000;
+      if (G.treasure.total && G.treasure.got >= G.treasure.total) G.score += 10000;
       AUDIO.win();
       queueOverlay('win');
     }
@@ -541,6 +654,7 @@
   function tickDoors(dt) {
     const p = G.player;
     for (const d of G.doors) {
+      if (d.push) { if (d.jamCd > 0) d.jamCd -= dt; continue; }   // pushwalls only move when the player shoves them
       const cx = d.cx + 0.5, cy = d.cy + 0.5;
       let near = Math.hypot(p.x - cx, p.y - cy) < TUNE.doorTriggerDist;
       if (!near) {
@@ -551,11 +665,6 @@
       const want = near ? 1 : 0;
       if (want && d.open < 0.05) AUDIO.door();
       setDoorOpen(d, d.open + (want - d.open) * Math.min(1, dt * TUNE.doorOpenSpeed));
-      if (d.push && !d.found && d.open > 0.5) {
-        d.found = true; G.secrets.found++;
-        AUDIO.unlock();
-        G.fx.push({ kind: 'msg', text: 'SECRET FOUND!', t: 2.2, max: 2.2 });
-      }
     }
   }
 
@@ -596,11 +705,18 @@
     tune: () => TUNE,
     buildWorld, update, tryFire, damagePlayer, killEnemy, explode, computeFlow,
     castRay, rayHit, hasLOS, isBlocked, cell, cellSolid, doorAt, torchCells, setDoorOpen,
-    moveEnt, collidePlayer, separateEnemies, makeRng, wounded, inWater,
+    moveEnt, collidePlayer, separateEnemies, makeRng, wounded, inWater, tryPushwall,
     waterCells: () => { const out = []; for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (water[idx(x, y)]) out.push([x, y]); return out; },
     width: () => W, height: () => H, grid: () => grid,
     levelCount: () => NS.levels.length,
-    nextLevel: () => { buildWorld((G.level + 1) % NS.levels.length); return G.level; },
+    // Wolfenstein's secret floor is not part of the rotation: it is reached only
+    // on the elevator, and riding out of it returns you to the next normal floor.
+    nextLevel: () => {
+      let n = (G.level + 1) % NS.levels.length;
+      while (NS.levels[n] && NS.levels[n].secret) n = (n + 1) % NS.levels.length;
+      buildWorld(n);
+      return G.level;
+    },
     hud: () => ({
       hp: Math.round(G.player.hp), armor: Math.round(G.player.armor),
       ammo: G.player.ammo, weapon: G.player.w, gun: WEAPONS[G.player.w].name,

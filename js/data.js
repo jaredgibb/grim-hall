@@ -4,11 +4,20 @@
 // own keys to it, so nothing else leaks into the global scope.
 // Legend:  # brick   T metal   D door   W pushwall (secret)   . floor
 //          ~ timber planks   w shallow water
+//          A vault floor (the inside of a secret chamber)
+//          E secret elevator (only ever behind a pushwall)
 //          P player  X exit
 //          g grunt   u gunner  r brute  O overlord
 //          1 shotgun 2 machinegun  a sg ammo  b mg ammo  h +30hp  H +60hp  k +50 armor
+//          c cross   v chalice   x chest   C crown      (treasure, worth points)
+// Secret chambers are not hand-authored: js/secrets.js carves them into every
+// map (vault floor, metal lining, one pushwall entrance, treasure inside). A
+// level with secretLevel: N hides the elevator to level N in its biggest vault.
 const GH = {
   tau: Math.PI * 2,
+
+  // Wolfenstein treasure values, in points
+  treasure: { c: 100, v: 500, x: 1000, C: 5000 },
 
   weapons: [
     { name: 'PISTOL',     rate: 0.28, dmg: 12, auto: false, ammo: null, kick: 0.012, pellets: 1, spread: 0.008 },
@@ -33,7 +42,7 @@ const GH = {
     projSpeed: 7, projLife: 4,
     dropHealth: 0.35, dropAmmo: 0.18,
     scorePerKill: 100,
-    gunAlarmRadius: 15,        // gunfire alerts enemies this far away
+    acousticZones: true,      // guards hear gunfire only inside their own acoustic zone (id floor codes)
     doorTriggerDist: 1.7,      // player / chasing enemy this close opens a door
     doorOpenSpeed: 4,          // easing rate toward the target openness
     doorPassFrac: 0.5,         // a door counts as solid below this open fraction
@@ -60,6 +69,7 @@ const GH = {
     {
       name: 'GRIM HALL',
       theme: 'hall',
+      secretLevel: 17,                 // elevator in its deepest vault opens THE GILDED HALL
       map: [
         "########################",
         "#P..#......#....#......#",
@@ -93,7 +103,7 @@ const GH = {
       name: 'IRON FORGE',
       theme: 'forge',
       // per-level overrides: the forge is darker, denser and louder
-      tune: { torchCount: 6, decorCount: 20, gunAlarmRadius: 12 },
+      tune: { torchCount: 6, decorCount: 20 },
       map: [
         "########################",
         "#P...#.....#.....#.....#",
@@ -155,7 +165,7 @@ const GH = {
       // wide vault rooms, fewer but heavier doors, a big boss hall
       name: 'IRON VAULT',
       theme: 'vault',
-      tune: { torchCount: 8, decorCount: 22, gunAlarmRadius: 18 },
+      tune: { torchCount: 8, decorCount: 22 },
       map: [
         "##########################",
         "#P.......#.......#.......#",
@@ -186,7 +196,7 @@ const GH = {
       // concentric ring level: outer walk, inner chambers, two overlord halls
       name: 'THE FURNACE',
       theme: 'forge',
-      tune: { torchCount: 14, decorCount: 24, gunAlarmRadius: 14, chargeCdExtra: 0.5 },
+      tune: { torchCount: 14, decorCount: 24, chargeCdExtra: 0.5 },
       map: [
         "########################",
         "#P....................1#",
@@ -219,7 +229,7 @@ const GH = {
       // pillars standing in the galleries, and two flooded galleries you wade
       name: 'CISTERN OF SALT',
       theme: 'cistern',
-      tune: { torchCount: 13, decorCount: 18, gunAlarmRadius: 16, hitChancePerDist: 0.045 },
+      tune: { torchCount: 13, decorCount: 18, hitChancePerDist: 0.045 },
       map: [
         "########################",
         "#P......#......#....u..#",
@@ -248,7 +258,7 @@ const GH = {
       // cathedral: a wide nave between two chapel aisles, colonnade down the middle
       name: 'BONE CATHEDRAL',
       theme: 'bone',
-      tune: { torchCount: 16, decorCount: 26, gunAlarmRadius: 20, chargeCdExtra: 1.2 },
+      tune: { torchCount: 16, decorCount: 26, chargeCdExtra: 1.2 },
       map: [
         "########################",
         "#P....#..........#.....#",
@@ -277,7 +287,7 @@ const GH = {
       // standing in the nave
       name: 'FROST VAULT',
       theme: 'frost',
-      tune: { torchCount: 12, decorCount: 20, gunAlarmRadius: 17, hitChancePerDist: 0.038 },
+      tune: { torchCount: 12, decorCount: 20, hitChancePerDist: 0.038 },
       map: [
         "##########################",
         "#P......#........#.......#",
@@ -309,7 +319,7 @@ const GH = {
       // through a door, feeding a long bottom gallery to the exit
       name: 'ASH WARREN',
       theme: 'ash',
-      tune: { torchCount: 12, decorCount: 22, gunAlarmRadius: 13, chargeCdExtra: 0.6 },
+      tune: { torchCount: 12, decorCount: 22, chargeCdExtra: 0.6 },
       map: [
         "##########################",
         "#P..#......#......#......#",
@@ -340,7 +350,7 @@ const GH = {
       // magma works: a ring walkway around six halls, the crucible in the middle
       name: 'MAGMA WORKS',
       theme: 'magma',
-      tune: { torchCount: 14, decorCount: 24, gunAlarmRadius: 16, hitChancePerDist: 0.042 },
+      tune: { torchCount: 14, decorCount: 24, hitChancePerDist: 0.042 },
       map: [
         "##########################",
         "#.a..g.............u.....#",
@@ -371,7 +381,7 @@ const GH = {
       // hollow spire: four stacked floors joined by stairwell corridors
       name: 'HOLLOW SPIRE',
       theme: 'spire',
-      tune: { torchCount: 14, decorCount: 20, gunAlarmRadius: 14, chargeCdExtra: 0.7 },
+      tune: { torchCount: 14, decorCount: 20, chargeCdExtra: 0.7 },
       map: [
         "####################",
         "#P....#......#.....#",
@@ -406,7 +416,7 @@ const GH = {
       // and a sealed reliquary behind a pushwall in the nave's north wall
       name: 'CRYSTAL GAUNTLET',
       theme: 'glass',
-      tune: { torchCount: 14, decorCount: 22, gunAlarmRadius: 18 },
+      tune: { torchCount: 14, decorCount: 22 },
       map: [
         "##############################",
         "##....#..#....####..g.#......#",
@@ -429,7 +439,7 @@ const GH = {
       // rotunda of onyx: a central rotunda, four halls and four corner chapels
       name: 'ROTUNDA OF ONYX',
       theme: 'onyx',
-      tune: { torchCount: 16, decorCount: 24, gunAlarmRadius: 15, chargeCdExtra: 0.8 },
+      tune: { torchCount: 16, decorCount: 24, chargeCdExtra: 0.8 },
       map: [
         "########################",
         "########################",
@@ -460,7 +470,7 @@ const GH = {
       // vault behind a pushwall in the lower west room
       name: 'THE PINEWORKS',
       theme: 'bone',
-      tune: { torchCount: 15, decorCount: 20, gunAlarmRadius: 16 },
+      tune: { torchCount: 15, decorCount: 20 },
       map: [
         "########################",
         "#a.....~...g..~.......1#",
@@ -485,7 +495,7 @@ const GH = {
       // breached in two places so the quarry has to be waded
       name: 'SUNKEN QUARRY',
       theme: 'cistern',
-      tune: { torchCount: 16, decorCount: 22, gunAlarmRadius: 16 },
+      tune: { torchCount: 16, decorCount: 22 },
       map: [
         "######################",
         "#.g.~.......g....~.g.#",
@@ -511,7 +521,7 @@ const GH = {
       // three cellars fed by a flooded sump; the sump vault is behind a pushwall
       name: 'FLOOD WORKS',
       theme: 'cistern',
-      tune: { torchCount: 14, decorCount: 20, gunAlarmRadius: 15, hitChancePerDist: 0.044 },
+      tune: { torchCount: 14, decorCount: 20, hitChancePerDist: 0.044 },
       map: [
         "########################",
         "#P...#.....#.....#.....#",
@@ -539,7 +549,7 @@ const GH = {
       // the drowned dock: a long open basin shored with timber ribs, hull vault below
       name: 'SUNKEN NAVY',
       theme: 'frost',
-      tune: { torchCount: 16, decorCount: 24, gunAlarmRadius: 18, chargeCdExtra: 0.9 },
+      tune: { torchCount: 16, decorCount: 24, chargeCdExtra: 0.9 },
       map: [
         "########################",
         "#P......a......h.....u.#",
@@ -561,6 +571,40 @@ const GH = {
         "#..g...~....~....~....X#",
         "#########W##############",
         "#########Hbk############",
+        "########################",
+      ],
+    },
+    {
+      // THE SECRET FLOOR - Wolfenstein's 10th floor is a reward stage: gilded
+      // masonry, treasure in every alcove, a heavy garrison, and a slab of solid
+      // rock the vault generator hollows into chained gold chambers. It is only
+      // ever reached by riding the elevator hidden behind a pushwall in GRIM HALL.
+      name: 'THE GILDED HALL',
+      theme: 'gilded',
+      secret: true,
+      tune: { torchCount: 16, decorCount: 22 },
+      map: [
+        "########################",
+        "#P.....................#",
+        "#..g...x...C...u.......#",
+        "#......................#",
+        "####D####D####D####D####",
+        "#......................#",
+        "#..v...r.......O...x...#",
+        "#......................#",
+        "####D####D####D####D####",
+        "#......................#",
+        "#..c..C..x..u..r..c....#",
+        "#......................#",
+        "####D####D####D####D####",
+        "#......................#",
+        "#..c...v....x....c....X#",
+        "#......................#",
+        "########################",
+        "########################",
+        "########################",
+        "########################",
+        "########################",
         "########################",
       ],
     },
