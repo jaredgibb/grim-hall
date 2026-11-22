@@ -31,15 +31,17 @@ Current touch model (single contact, anchored wherever the finger lands):
 | hold (>= 800 ms, no drag) | pause overlay | main.js 1256–1258 |
 | tap the HUD GUN cell | cycle weapon | main.js 1291–1298 |
 
-Verified headlessly with synthetic `TouchEvent`s (`node .debug-touch.js` +
-`google-chrome --headless=new --dump-dom .debug-touch.html`):
+Verified headlessly with synthetic pointer events: `node test/touch-harness.js`
+writes a probe page (`.debug-touch.html`) and headless Chrome reads `#touchprobe`.
+The current suite is `npm run test:touch`, which runs 71 assertions against that page. Early runs of the probe reported
 `tap: shots=1`, `drag up-right: turn=1.00 fwd=1.00`, `hold 900ms: state=pause`,
 `drag-then-hold: state=play`, `release: turn=0 fwd=0`. The mechanics work; the
 scheme is the problem.
 
 ### Measured layout at real phone viewports
 
-Measured with `.debug-geo.js` (headless Chrome, HUD forced visible):
+Measured headlessly with the harness's geometry probe (HUD forced visible; the
+one-off `.debug-geo.js` probe it came from has been removed):
 
 | viewport | canvas | letterbox | HUD | HUD cell | SOUND button | minimap |
 |---|---|---|---|---|---|---|
@@ -273,12 +275,14 @@ firePad.addEventListener('pointerup',  () => { Input.fire = 0; });
   mobile GPUs are the reason most browser FPSes stutter, not the input.
 
 ### Stage 4 — how to test it
-Headless Chrome can't emit real touch, so keep the synthetic-event harness
-(`.debug-touch.js` pattern) but promote it to a real assertion suite:
+Headless Chrome can't emit real touch, so the harness drives the real handlers with
+synthetic `PointerEvent`s and asserts the result. That is now `test/touch-harness.js`:
 
 ```
-node .debug-touch.js && google-chrome --headless=new --dump-dom --window-size=844,477 \
-  "http://localhost:8090/.debug-touch.html?auto=1" | grep touchprobe
+npm run test:touch
+# or read the probe output directly:
+node test/touch-harness.js && google-chrome --headless=new --dump-dom --window-size=1272,498 --virtual-time-budget=30000 \
+  "file://$PWD/.debug-touch.html?touch=1&auto=1" | sed -n 's/.*touchprobe[^>]*>//p'
 ```
 Assertions to add: tap fires exactly once, left drag strafes, sprint trips at 85%
 deflection, a second simultaneous contact fires while the first steers,

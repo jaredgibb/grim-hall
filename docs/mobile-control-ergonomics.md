@@ -205,6 +205,18 @@ complaint about aim assist.
    the minimap, or reuse `#hit`). A player who can see the assist can trust it —
    or turn it off.
 
+**Shipped — and the bug the blend exposed.** The blend above needs the *stick's* value,
+not `Input.turn`. The first version read `Input.turn` as "the stick", but the assist
+writes `Input.turn` on the same tick, so each frame it added its own last output: with
+the thumb at rest `turn` climbed to 0.8, then 1.0, and stayed there — the player spun
+instead of settling. The harness only caught it intermittently, because a target that
+happened to be near the heading made the spin look like a normal turn. The stick's own
+value now lives in `stickTurn`, written only by the look stick, the FIRE-pad slide and
+the arrow keys via `setTurn()`; the assist reads `stickTurn` and writes `Input.turn`.
+The general rule: **any assist that writes to an input channel must keep a separate
+record of what the player actually asked for**, and the test must prove the assist
+*settles* (peak turn within its own clamp over a soak), not just that it turns.
+
 ---
 
 ### Finding 6 — the accessibility gaps the guidelines name explicitly

@@ -213,6 +213,26 @@ window.addEventListener('load', () => {
       ok('option buttons do not also resume the game', G.state === 'play', 'state=' + G.state);
 
       // ---- aim assist ----
+      // Stage a deterministic target: the procedural level puts the spawn and the
+      // enemies in different places every run, so park the player in an open cell
+      // beside a living enemy rather than hoping one wanders into range.
+      const stageTarget = () => {
+        const MAP = GH.game.grid();
+        for (const e of G.enemies) {
+          if (e.dead) continue;
+          const ex = Math.floor(e.x), ey = Math.floor(e.y);
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) {
+            const nx = ex + dx, ny = ey + dy;
+            if (nx < 1 || ny < 1 || ny >= MAP.length - 1 || nx >= MAP[ny].length - 1) continue;
+            if (MAP[ny][nx] === '#' || MAP[ny][nx] === 'T') continue;
+            if (GH.game.hasLOS(nx + 0.5, ny + 0.5, e.x, e.y)) {
+              G.player.x = nx + 0.5; G.player.y = ny + 0.5;
+              return e;
+            }
+          }
+        }
+        return null;
+      };
       const nearestVisible = () => {
         let best = null, bd = 90;
         for (const e of G.enemies) {
@@ -222,18 +242,39 @@ window.addEventListener('load', () => {
         }
         return best;
       };
-      let target = nearestVisible();
-      if (target) {
+      stageTarget();
+      if (nearestVisible()) {
         toggle('aim');
-        const ang = Math.atan2(target.y - G.player.y, target.x - G.player.x);
+        const tgt = nearestVisible();
+        const ang = Math.atan2(tgt.y - G.player.y, tgt.x - G.player.x);
         G.player.a = ang + 0.6;                       // start ~34 deg off target
         await wait(700);
-        // measure against the target as it is now: enemies chase, so the bearing
-        // captured before the wait is already stale by the time the assist closes in
+        // it is now rather than the bearing captured before the wait.
         const live = nearestVisible();
-        let diff = live ? Math.abs(norm(Math.atan2(live.y - G.player.y, live.x - G.player.x) - G.player.a))
-                        : Math.abs(norm(G.player.a - ang));
+        const diff = live ? Math.abs(norm(Math.atan2(live.y - G.player.y, live.x - G.player.x) - G.player.a))
+                          : Math.abs(norm(G.player.a - ang));
         ok('aim assist turns toward a visible enemy', diff < 0.4, 'off by ' + diff.toFixed(2) + ' rad');
+        // Soak test: with the thumb off the stick the assist is the only turn input,
+        // so its output has to stay inside its own clamp. An assist that reads its own
+        // output back as the stick feeds itself, pins turn at 1 and spins the player.
+        let peakTurn = 0;
+        for (let i = 0; i < 20; i++) { await wait(100); peakTurn = Math.max(peakTurn, Math.abs(I.turn)); }
+        ok('the assist does not feed on its own output', peakTurn <= 0.45,
+          'peak turn over 2 s = ' + peakTurn.toFixed(2) + ' (the assist clamps at 0.4)');
+        const inRange = () => {
+          let best = 1e9;
+          for (const e of G.enemies) {
+            if (e.dead) continue;
+            const d2 = (e.x - G.player.x) ** 2 + (e.y - G.player.y) ** 2;
+            if (d2 < 90 && GH.game.hasLOS(G.player.x, G.player.y, e.x, e.y))
+              best = Math.min(best, Math.abs(norm(Math.atan2(e.y - G.player.y, e.x - G.player.x) - G.player.a)));
+          }
+          return best;
+        };
+        const settledDiff = inRange();
+        if (settledDiff > 100) out.push('NOTE: no enemy stayed in assist range during the soak, settling untested');
+        else ok('the assist settles on a target instead of running past it', settledDiff < 0.35,
+          'after 2 s the heading is ' + settledDiff.toFixed(2) + ' rad off the nearest enemy in range');
         toggle('aim');
         ok('aim assist is opt-in and off again', I.aim === false, 'aim=' + I.aim);
       } else {
@@ -270,6 +311,7 @@ window.addEventListener('load', () => {
       toggle('curve');
 
       // ---- aim assist blends with the stick instead of switching off ----
+      stageTarget();
       if (nearestVisible()) {
         const runAssist = async (aimOn) => {
           if (aimOn) toggle('aim');

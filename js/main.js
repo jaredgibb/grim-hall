@@ -15,6 +15,11 @@ const Main = (() => {
   let torches = [], flames = [], cones = [], embers = [], coneGeo = null;
   let msgDiv, lastMini = 0, popDiv, popUntil = 0, lastKills = 0, dmgDiv;
   const Input = { fwd: 0, back: 0, left: 0, right: 0, turn: 0, fire: 0, fireEdge: 0, wantW: -1, sprint: 0, autoFire: 0, aim: 0 };
+  // What the thumb or the arrow keys actually asked for. The aim assist writes
+  // Input.turn on top of this, so it needs the stick's own value: reading Input.turn
+  // back would make the assist feed on its own output and the player would spin.
+  let stickTurn = 0;
+  const setTurn = v => { stickTurn = v; Input.turn = v; };
   NS.input = Input;      // game.js reads GH.input
   window.Input = Input;  // handy for debugging from the console
   const keys = {};
@@ -1145,8 +1150,8 @@ const Main = (() => {
   let assistOn = false;
   function aimAssist() {
     if (!TOUCH || !Input.aim || G.state !== 'play') { assistOn = false; return; }
-    const stick = Math.max(-1, Math.min(1, Input.turn || 0));
-    if (Math.abs(stick) >= 0.9) { assistOn = false; return; }   // the thumb is aiming on purpose
+    const stick = Math.max(-1, Math.min(1, stickTurn || 0));   // what the thumb/keys asked for
+    if (Math.abs(stick) >= 0.9) { assistOn = false; return; }  // the thumb is aiming on purpose
     const p = G.player;
     let best = null, bd = 90;                 // ~9.5 tiles: aiming past that is pointless
     for (const e of G.enemies) {
@@ -1159,8 +1164,10 @@ const Main = (() => {
     while (rel > Math.PI) rel -= TAU;
     while (rel < -Math.PI) rel += TAU;
     if (Math.abs(rel) < 0.04) { assistOn = false; return; }     // already roughly on target
-    const want = Math.max(-0.4, Math.min(0.4, rel * 0.8));
-    Input.turn = stick + want * (1 - Math.abs(stick));
+    // The assist only gets the authority the thumb is not using: a full stick means
+    // no assist at all, half a stick means half an assist.
+    const want = Math.max(-0.4, Math.min(0.4, rel * 0.8)) * (1 - Math.abs(stick));
+    Input.turn = Math.max(-1, Math.min(1, stick + want));
     assistOn = true;
   }
   // ---- overlays ----
@@ -1171,7 +1178,7 @@ const Main = (() => {
   }
   function pauseGame() {
     if (G.state !== 'play') return;
-    Input.fwd = Input.back = Input.left = Input.right = Input.turn = Input.sprint = Input.fire = 0;
+    Input.fwd = Input.back = Input.left = Input.right = 0; setTurn(0); Input.sprint = Input.fire = 0;
     G.state = 'pause'; showOverlay('pause');
   }
   // ---- touch option panel: every assist is opt-in and lives in one place ----
@@ -1381,7 +1388,7 @@ const Main = (() => {
     cv().addEventListener('contextmenu', e => e.preventDefault());
 
     // arrow-key turning (no polling interval: it would overwrite the touch stick)
-    const arrowTurn = () => { Input.turn = (keys.arrowleft ? -1 : 0) + (keys.arrowright ? 1 : 0); };
+    const arrowTurn = () => { setTurn((keys.arrowleft ? -1 : 0) + (keys.arrowright ? 1 : 0)); };
 
     // ---- touch: a visible two-thumb control surface --------------------------
     // Left thumb  = floating move stick (walk/strafe, sprint at full push)
@@ -1500,7 +1507,7 @@ const Main = (() => {
       // tap on the stick is the trigger
       if (move.combo && !move.dragged && performance.now() - move.t0 < TAP_MS) tapFire();
       move.id = -1; moveActive = false; zeroMove();
-      if (move.combo) Input.turn = 0;
+      if (move.combo) setTurn(0);
       moveEl.classList.remove('on', 'sprint'); moveEl.classList.add('rest');
       moveEl.style.left = home.move[0] + 'px'; moveEl.style.top = home.move[1] + 'px';
       moveKnob.style.transform = 'translate(0,0)';
@@ -1508,7 +1515,7 @@ const Main = (() => {
     function endLook() {
       if (look.id < 0) return;
       if (!look.dragged && performance.now() - look.t0 < TAP_MS) tapFire();
-      look.id = -1; lookActive = false; Input.turn = 0;
+      look.id = -1; lookActive = false; setTurn(0);
       lookEl.classList.remove('on'); lookEl.classList.add('rest');
       lookEl.style.left = home.look[0] + 'px'; lookEl.style.top = home.look[1] + 'px';
       lookKnob.style.transform = 'translate(0,0)';
@@ -1517,7 +1524,7 @@ const Main = (() => {
       padDown = false; Input.fire = 0; firePad.classList.remove('down');
       // release by pointer id, not by target: a thumb that slides off the pad and
       // lifts on the canvas must not leave the trigger stuck down
-      if (fire.id >= 0) { fire.id = -1; if (look.id < 0) Input.turn = 0; }
+      if (fire.id >= 0) { fire.id = -1; if (look.id < 0) setTurn(0); }
     };
     TouchUI.release = () => { endMove(); endLook(); endFire(); };
     // One-thumb steering has to be re-evaluated every frame: the finger stays
@@ -1531,7 +1538,7 @@ const Main = (() => {
       }
       if (!prefs.one || move.id < 0) return;
       const rel = wrap(move.dir - G.player.a);
-      Input.turn = Math.max(-1, Math.min(1, rel * 1.3));
+      setTurn(Math.max(-1, Math.min(1, rel * 1.3)));
     };
     const releasePointer = e => {
       lastTouch = performance.now();
@@ -1583,7 +1590,7 @@ const Main = (() => {
           if (d > DEAD) move.dragged = true;
         } else {                          // a resting thumb is not a step
           moveActive = false;
-          zeroMove(); if (move.combo) Input.turn = 0;
+          zeroMove(); if (move.combo) setTurn(0);
           moveEl.classList.remove('sprint');
           moveKnob.style.transform = 'translate(0,0)';
           return;
@@ -1629,9 +1636,9 @@ const Main = (() => {
           lookActive = true;
           // Power curve: the first third of the drag is where aim precision lives,
           // the outer part is where the player just wants a fast turn.
-          Input.turn = Math.sign(dx) * Math.pow(Math.min(1, mag / STEER), CURVE);
+          setTurn(Math.sign(dx) * Math.pow(Math.min(1, mag / STEER), CURVE));
         } else {
-          lookActive = false; Input.turn = 0;
+          lookActive = false; setTurn(0);
         }
         lookKnob.style.transform = 'translate(' + dx + 'px,' + Math.max(-R, Math.min(R, dy)) + 'px)';
       } else if (e.pointerId === fire.id) {
@@ -1639,7 +1646,7 @@ const Main = (() => {
         let dx = e.clientX - fire.ox;
         if (dx > AIM) { fire.ox += dx - AIM; dx = AIM; }
         else if (dx < -AIM) { fire.ox += dx + AIM; dx = -AIM; }
-        Input.turn = Math.sign(dx) * Math.pow(Math.min(1, Math.abs(dx) / AIM), CURVE);
+        setTurn(Math.sign(dx) * Math.pow(Math.min(1, Math.abs(dx) / AIM), CURVE));
       }
     }, { passive: false });
 
