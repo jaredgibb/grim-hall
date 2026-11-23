@@ -26,3 +26,6 @@ Discovered from this codebase; dated so they can be pruned when stale.
   `wrangler pages deployment list --project-name grim-hall` (the Source column must equal
   `git rev-parse HEAD`) or md5-compare the served `js/*.js` against the local files —
   `https://grim-hall.pages.dev`. (2026-11-22)
+- Grim Hall render A/B switches in js/main.js (?post=0, ?nocone, ?glow=0, ?noplink,
+  ?nowater, ?grade=0) isolate texture vs composite-pass effects; use them before
+  changing art code. (2026-11-23)

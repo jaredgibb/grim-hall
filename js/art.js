@@ -67,40 +67,40 @@
   const THEMES = {
     hall:  { brick: [74, 38, 32], mortar: [34, 22, 18], metal: [61, 71, 84],
              accent: '#8a5a3a', glow: '#e08a4a', halo: 'rgba(224,138,74,0.52)',
-             drip: 'rgba(224,160,110,0.16)', wood: [88, 66, 44], water: [30, 46, 52], lining: true },
+             drip: 'rgba(158,108,74,0.11)', wood: [88, 66, 44], water: [30, 46, 52], lining: true },
     crypt: { brick: [46, 44, 40], mortar: [16, 15, 13], metal: [110, 104, 96],
              accent: '#b9a98c', glow: '#d8c7a5', halo: 'rgba(216,199,165,0.45)',
-             drip: 'rgba(190,175,150,0.18)', wood: [72, 62, 52], water: [36, 38, 42], lining: true },
+             drip: 'rgba(120,110,96,0.11)', wood: [72, 62, 52], water: [36, 38, 42], lining: true },
     forge: { brick: [66, 44, 30], mortar: [26, 20, 16], metal: [78, 60, 42], accent: '#b06a2a',
-             glow: '#c9531f', halo: 'rgba(201,83,31,0.45)', drip: 'rgba(200,120,60,0.15)',
+             glow: '#c9531f', halo: 'rgba(201,83,31,0.45)', drip: 'rgba(150,96,60,0.12)',
              wood: [84, 62, 38], water: [42, 36, 30] },
     vault: { brick: [40, 46, 58], mortar: [15, 18, 22], metal: [62, 72, 84], accent: '#3d7a8c',
-             glow: '#6fb0c4', halo: 'rgba(111,176,196,0.4)', drip: 'rgba(140,170,185,0.16)',
+             glow: '#6fb0c4', halo: 'rgba(111,176,196,0.4)', drip: 'rgba(104,124,134,0.11)',
              wood: [56, 60, 64], water: [22, 40, 50], lining: true },
     // gilded: the secret floor - warm gold masonry, brass-plated everything
     gilded:  { brick: [96, 78, 42], mortar: [34, 26, 16], metal: [164, 138, 72],
                accent: '#e8c05a', glow: '#ffd27a', halo: 'rgba(245,205,120,0.52)',
-               drip: 'rgba(240,210,140,0.14)', wood: [104, 84, 50], water: [48, 44, 36], lining: true },
+               drip: 'rgba(170,140,90,0.11)', wood: [104, 84, 50], water: [48, 44, 36], lining: true },
     // cistern: damp salt-green stone; bone: pale ash-lime masonry
     cistern: { brick: [46, 62, 66], mortar: [20, 28, 30], metal: [56, 72, 78], accent: '#3f7a86',
-               drip: 'rgba(214,226,218,0.20)', wood: [58, 62, 52], water: [24, 58, 64] },
+               drip: 'rgba(120,142,138,0.11)', wood: [58, 62, 52], water: [24, 58, 64] },
     bone:    { brick: [86, 82, 72], mortar: [38, 34, 28], metal: [96, 92, 80], accent: '#c8b78a',
-               drip: 'rgba(232,222,200,0.16)', wood: [112, 98, 76], water: [46, 54, 52] },
+               drip: 'rgba(150,140,122,0.11)', wood: [112, 98, 76], water: [46, 54, 52] },
     // frost: icy slate with verdigris on the iron; ash: soot-grey cinder block
     frost:   { brick: [58, 66, 78], mortar: [24, 30, 36], metal: [70, 86, 98], accent: '#6fa8c4',
-               drip: 'rgba(196,222,236,0.18)', wood: [70, 82, 92], water: [26, 44, 54] },
+               drip: 'rgba(120,140,152,0.11)', wood: [70, 82, 92], water: [26, 44, 54] },
     ash:     { brick: [64, 60, 58], mortar: [26, 24, 22], metal: [72, 68, 64], accent: '#8f8477',
-               drip: 'rgba(190,180,170,0.14)', water: [34, 38, 40] },
+               drip: 'rgba(118,110,104,0.11)', water: [34, 38, 40] },
     // magma: basalt streaked with molten iron; spire: cold green-black slate
     magma:   { brick: [56, 36, 32], mortar: [20, 14, 12], metal: [92, 62, 44], accent: '#e2713a',
-               drip: 'rgba(240,120,50,0.22)', glow: '#ff8a3a', wood: [70, 48, 34], water: [56, 34, 28] },
+               drip: 'rgba(140,80,52,0.11)', glow: '#ff8a3a', wood: [70, 48, 34], water: [56, 34, 28] },
     spire:   { brick: [44, 52, 48], mortar: [18, 22, 22], metal: [60, 70, 66], accent: '#3f8a72',
-               drip: 'rgba(150,200,180,0.16)', water: [24, 44, 40] },
+               drip: 'rgba(100,130,120,0.11)', water: [24, 44, 40] },
     // glass: pale quartz with luminous crystal veins; onyx: black polished stone
     glass:   { brick: [68, 76, 90], mortar: [24, 28, 36], metal: [104, 118, 132], accent: '#9fc6d8',
-               drip: 'rgba(206,226,238,0.16)', glow: '#7fd6e4', halo: 'rgba(150,200,230,0.5)', water: [30, 52, 62] },
+               drip: 'rgba(126,142,152,0.11)', glow: '#7fd6e4', halo: 'rgba(150,200,230,0.5)', water: [30, 52, 62] },
     onyx:    { brick: [32, 31, 36], mortar: [14, 14, 16], metal: [54, 52, 58], accent: '#c9a24a',
-               drip: 'rgba(201,162,74,0.12)', glow: '#e8c05a', halo: 'rgba(230,190,110,0.5)', water: [18, 22, 26] },
+               drip: 'rgba(96,84,62,0.11)', glow: '#e8c05a', halo: 'rgba(230,190,110,0.5)', water: [18, 22, 26] },
   };
   function mkSet() {
     const a = mkc(TS, TS), h = mkc(TS, TS), r = mkc(TS, TS), e = mkc(TS, TS);
@@ -168,8 +168,19 @@
       }
     }
     noise(g, TS, TS, 220, 0.05, 0.16, 2);
-    g.fillStyle = pal.drip || 'rgba(10,6,4,0.35)';
-    for (let i = 0; i < 8; i++) g.fillRect(rnd() * TS | 0, 0, 2 + rnd() * 3 | 0, 30 + rnd() * 90 | 0);
+    // Mineral drips: faint weather staining down the masonry. The streaks take the
+    // theme's own stone tone (not a pale accent) and are painted into the height and
+    // roughness maps as well - worn shallow and more diffuse - so they read as
+    // discoloration in the brick instead of a bright film painted over it.
+    g.fillStyle = pal.drip || 'rgba(18,12,9,0.10)';
+    hg.fillStyle = 'rgba(90,90,90,0.3)';    // the stained stone is worn slightly low
+    rg.fillStyle = 'rgba(255,255,255,0.35)'; // ...and more diffuse, so torches don't glint off it
+    for (let i = 0; i < 8; i++) {
+      const x = rnd() * TS | 0, w = 1 + (rnd() * 2 | 0), h = 22 + (rnd() * 60 | 0);
+      g.fillRect(x, 0, w, h);
+      hg.fillRect(x, 0, w, h);
+      rg.fillRect(x, 0, w, h);
+    }
     g.strokeStyle = 'rgba(0,0,0,0.5)'; g.lineWidth = 1;
     for (let i = 0; i < 4; i++) {
       g.beginPath(); let x = rnd() * TS | 0, y = rnd() * 60 | 0;
